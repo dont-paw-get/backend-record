@@ -18,5 +18,9 @@ class Settings(BaseSettings):
     APP_HOST: str = "0.0.0.0"
     APP_PORT: int = 8000
 
+    # PostgreSQL 연결 문자열. 기본값을 두지 않고 필수 환경변수로 요구합니다.
+    # 실제 값은 .env 파일(로컬) 또는 배포 환경의 환경변수로 주입합니다.
+    DATABASE_URL: str
+
 
 settings = Settings()
