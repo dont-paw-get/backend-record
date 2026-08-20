@@ -41,14 +41,23 @@ def test_settings_reads_database_url_from_env(monkeypatch):
 def test_settings_requires_database_url(monkeypatch):
     """DATABASE_URL에 기본값이 없으므로, 값이 없으면 설정 로딩이 실패해야 한다.
 
-    로컬 실제 .env 파일에 DATABASE_URL이 설정되어 있어도 이 테스트가
-    영향받지 않도록, OS 환경변수만 제거하는 것에 더해 Settings 생성 시
-    _env_file=None으로 .env 파일 로딩 자체를 명시적으로 비활성화한다.
-    """
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    sys.modules.pop("app.core.config", None)
+    app/core/config.py에는 module-level `settings = Settings()`가 있어
+    모듈 import 시점에 곧바로 검증이 수행된다. .env 파일이 없는 환경
+    (예: CI)에서 DATABASE_URL 없이 그대로 import하면 이 import 자체가
+    ValidationError로 실패해버려 아래 `Settings(_env_file=None)` 호출까지
+    도달하지 못한다.
 
+    따라서 먼저 TEST_DATABASE_URL을 주입한 상태로 모듈을 import해
+    module-level 초기화를 안전하게 통과시킨 뒤, DATABASE_URL을 제거하고
+    _env_file=None으로 .env 로딩을 비활성화한 채 Settings()를 직접
+    호출해 검증한다. 이 순서 덕분에 로컬/CI의 실제 .env 존재 여부와
+    무관하게 항상 동일하게 동작한다.
+    """
+    monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
+    sys.modules.pop("app.core.config", None)
     config_module = importlib.import_module("app.core.config")
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
 
     with pytest.raises(ValidationError):
         config_module.Settings(_env_file=None)
