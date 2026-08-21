@@ -22,5 +22,11 @@ class Settings(BaseSettings):
     # 실제 값은 .env 파일(로컬) 또는 배포 환경의 환경변수로 주입합니다.
     DATABASE_URL: str
 
+    # NAVER Cloud CLOVA OCR General API 연결 정보. 기본값을 두지 않고
+    # 필수 환경변수로 요구합니다. 실제 URL/Secret 값은 코드에 작성하지
+    # 않으며, .env 파일(로컬) 또는 배포 환경의 환경변수로 주입합니다.
+    CLOVA_OCR_INVOKE_URL: str
+    CLOVA_OCR_SECRET_KEY: str
+
 
 settings = Settings()

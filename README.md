@@ -120,3 +120,59 @@ alembic revision --autogenerate -m "<message>"
 **CLIAR-39에서는 실제 업무 테이블 및 migration revision을 생성하지 않습니다.**
 이번 단계는 SQLAlchemy/Alembic이 PostgreSQL과 연결될 수 있는 기반 구조만
 준비하는 것을 목표로 합니다.
+
+## CLOVA OCR 문장 텍스트 추출 API (CLIAR-44)
+
+Frontend에서 Crop/회전까지 완료된 최종 책 문장 이미지를 업로드하면,
+backend-record가 NAVER Cloud CLOVA OCR General API를 호출해 한국어 텍스트를
+추출한 뒤 아래와 같은 형태로 반환합니다.
+
+```
+POST /api/v1/ocr/sentences
+Content-Type: multipart/form-data
+
+필드: image (image/jpeg 또는 image/png, 최대 50MB)
+```
+
+응답 예시:
+
+```json
+{
+  "text": "첫 번째 줄\n두 번째 줄",
+  "lines": ["첫 번째 줄", "두 번째 줄"],
+  "request_id": "…",
+  "confidence": 0.97
+}
+```
+
+### 환경변수 설정
+
+`CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET_KEY`는 기본값이 없는 필수
+환경변수입니다. NAVER Cloud Console에서 발급받은 실제 값을 로컬 `.env`
+파일에만 채워주세요. `.env.example`에는 placeholder만 있으며, 실제 값은
+Git에 커밋되지 않습니다.
+
+```
+CLOVA_OCR_INVOKE_URL=<실제 발급받은 Invoke URL>
+CLOVA_OCR_SECRET_KEY=<실제 발급받은 Secret Key>
+```
+
+### 로컬에서 실제 CLOVA OCR 연동 검증하기
+
+1. 위 환경변수를 `.env`에 채운 뒤 서버를 실행합니다.
+   ```powershell
+   uvicorn app.main:app --reload
+   ```
+2. Swagger UI(`http://127.0.0.1:8000/docs`)에서 `POST /api/v1/ocr/sentences`를
+   열고, 로컬에 있는 본인 소유의 책 문장 이미지 파일(jpg/png)을 업로드해
+   테스트합니다.
+3. 또는 curl로 검증할 수 있습니다. (`<path-to-image>`는 로컬 이미지 경로)
+   ```powershell
+   curl.exe -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences" `
+     -F "image=@<path-to-image>;type=image/jpeg"
+   ```
+
+테스트에 사용한 실제 이미지 파일은 Git에 추가하지 마세요.
+
+일반 `pytest` 실행 시에는 CLOVA OCR API를 실제로 호출하지 않으며, httpx
+호출은 모두 mock으로 대체되어 있습니다.
