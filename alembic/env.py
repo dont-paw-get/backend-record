@@ -27,6 +27,12 @@ if config.config_file_name is not None:
 # rather than hardcoded in alembic.ini.
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
+# 공용 Aurora PostgreSQL을 여러 backend 서비스가 함께 사용하므로, 각
+# 서비스의 migration 진행 상태가 기본 alembic_version 테이블 하나에
+# 뒤섞이지 않도록 backend-record 전용 version table을 사용한다.
+# (backend-auth는 alembic_version_auth를 사용한다.)
+VERSION_TABLE = "alembic_version_record"
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 #
@@ -59,6 +65,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table=VERSION_TABLE,
     )
 
     with context.begin_transaction():
@@ -80,7 +87,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table=VERSION_TABLE,
         )
 
         with context.begin_transaction():
