@@ -28,5 +28,26 @@ class Settings(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str
     CLOVA_OCR_SECRET_KEY: str
 
+    # --- Noti: 인프라/CI-CD 모니터링 알림 에이전트 ---
+    DISCORD_WEBHOOK_URL: str | None = None
+    GITHUB_WEBHOOK_SECRET: str | None = None
+
+    # Strands Agents가 사용할 LLM 프로바이더. "anthropic" | "bedrock".
+    # 기본은 anthropic(= ANTHROPIC_API_KEY만 있으면 동작). 추후 AWS/Bedrock이
+    # 준비되면 "bedrock"으로 바꾸고 NOTI_AWS_REGION만 지정하면 된다.
+    NOTI_MODEL_PROVIDER: str = "anthropic"
+
+    # 사용할 모델 ID. 지정하지 않으면 프로바이더별 기본값을 사용한다.
+    NOTI_MODEL_ID: str | None = None
+
+    # 에이전트 1회 응답의 최대 토큰 수(알림 요약은 짧으므로 넉넉히 1024).
+    NOTI_MAX_TOKENS: int = 1024
+
+    # Anthropic API 직접 연동(NOTI_MODEL_PROVIDER="anthropic") 시 필요한 키.
+    ANTHROPIC_API_KEY: str | None = None
+
+    # Bedrock 연동(NOTI_MODEL_PROVIDER="bedrock") 시 사용할 AWS 리전.
+    NOTI_AWS_REGION: str | None = None
+
 
 settings = Settings()
