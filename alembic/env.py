@@ -27,12 +27,21 @@ if config.config_file_name is not None:
 # rather than hardcoded in alembic.ini.
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
+# 공용 Aurora PostgreSQL을 여러 backend 서비스가 함께 사용하므로, 각
+# 서비스의 migration 진행 상태가 기본 alembic_version 테이블 하나에
+# 뒤섞이지 않도록 backend-record 전용 version table을 사용한다.
+# (backend-auth는 alembic_version_auth를 사용한다. CLIAR-69에서 도입)
+VERSION_TABLE = "alembic_version_record"
+
 # add your model's MetaData object here
 # for 'autogenerate' support
 #
-# CLIAR-39에서는 실제 도메인 모델이 없으므로 특정 모델 모듈을 import하지
-# 않습니다. 향후 모델이 추가되면 여기에서 import해 Base.metadata에
-# 등록되도록 해야 합니다 (예: from app.models import book  # noqa: F401)
+# CLIAR-52에서 Scrap 모델을 추가했으므로 Base.metadata에 등록되도록
+# import한다. library_book은 backend-record가 소유하지 않으므로 이
+# 저장소에는 모델을 두지 않으며, Scrap.book_id는 FK 없는 일반 컬럼으로
+# 외부 서비스의 책 식별자를 참조하는 값으로만 관리한다.
+from app.models import scrap  # noqa: E402,F401
+
 target_metadata = Base.metadata
 
 # other values from the config, defined by the needs of env.py,
@@ -59,6 +68,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_table=VERSION_TABLE,
     )
 
     with context.begin_transaction():
@@ -80,7 +90,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            version_table=VERSION_TABLE,
         )
 
         with context.begin_transaction():
