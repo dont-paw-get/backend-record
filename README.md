@@ -121,6 +121,16 @@ alembic revision --autogenerate -m "<message>"
 이번 단계는 SQLAlchemy/Alembic이 PostgreSQL과 연결될 수 있는 기반 구조만
 준비하는 것을 목표로 합니다.
 
+### Legacy scrap migration 주의사항 (CLIAR-121)
+
+Scrap 저장 책임이 `backend-book`으로 이전되어 이 저장소에서 Scrap
+model/API/repository를 제거했습니다(`alembic/versions/0bed2a9a23f9_create_scrap_table.py`는
+과거 migration history이므로 삭제/수정하지 않았습니다). 배포된 DB에는
+과거 `scrap` 테이블이 여전히 남아 있을 수 있습니다. `alembic revision
+--autogenerate` 실행 시 `scrap` 테이블에 대한 DROP이 자동 제안될 수
+있는데, 별도의 DB cleanup 결정/Jira 없이는 이를 그대로 받아들이지
+마세요.
+
 ## CLOVA OCR 문장 텍스트 추출 API (CLIAR-44)
 
 Frontend에서 Crop/회전까지 완료된 최종 책 문장 이미지를 업로드하면,
