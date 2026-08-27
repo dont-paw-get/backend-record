@@ -192,3 +192,33 @@ CLOVA_OCR_SECRET_KEY=<실제 발급받은 Secret Key>
 
 일반 `pytest` 실행 시에는 CLOVA OCR API를 실제로 호출하지 않으며, httpx
 호출은 모두 mock으로 대체되어 있습니다.
+
+## 책 표지 OCR 제목/저자 후보 추출 API (CLIAR-131)
+
+책 표지 이미지를 업로드하면 CLOVA OCR로 텍스트를 추출한 뒤, 표지에서
+가장 큰 글씨로 인쇄된 줄을 제목 후보로, '지음/글/옮김' 등 저자 표기
+키워드가 포함된 줄을 저자 후보로 추출해 반환합니다.
+
+```
+POST /api/v1/ocr/covers
+Content-Type: multipart/form-data
+
+필드: image (image/jpeg 또는 image/png, 최대 50MB)
+```
+
+응답 예시:
+
+```json
+{
+  "title_candidate": "어떤 책의 제목",
+  "author_candidates": ["김작가 지음"],
+  "lines": ["어떤 책의 제목", "김작가 지음"],
+  "request_id": "…",
+  "confidence": 0.93
+}
+```
+
+**이 API는 OCR 후처리로 얻은 "후보"만 반환하며, 실제 도서 등록/검색/저장은
+수행하지 않습니다.** 최종 확정은 Frontend에서 사용자 확인을 거쳐야 합니다.
+CLOVA OCR 호출 로직은 `POST /api/v1/ocr/sentences`와 동일한 코드를
+재사용하며, 제목/저자 후보 추출을 위한 후처리만 다릅니다.
