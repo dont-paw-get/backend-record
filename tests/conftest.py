@@ -24,3 +24,4 @@ os.environ.setdefault(
     "https://example.apigw.ntruss.com/custom/v1/00000/xxxxxxxx/general",
 )
 os.environ.setdefault("CLOVA_OCR_SECRET_KEY", "dummy-test-secret-key")
+os.environ.setdefault("OCR_PROVIDER", "clova")

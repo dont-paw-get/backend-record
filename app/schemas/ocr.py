@@ -10,11 +10,15 @@ class OcrSentencesResponse(BaseModel):
     """
 
     text: str = Field(description="줄바꿈으로 재구성된 전체 OCR 텍스트")
-    lines: list[str] = Field(description="lineBreak 기준으로 재구성된 줄 단위 텍스트 목록")
-    request_id: str = Field(description="내부 추적용 CLOVA OCR 요청 ID")
+    lines: list[str] = Field(description="줄 단위 텍스트 목록")
+    request_id: str = Field(description="내부 추적용 OCR 요청 ID")
     confidence: float | None = Field(
-        default=None, description="필드별 인식 신뢰도의 평균값 (0~1)"
+        default=None, description="인식 신뢰도 (0~1 범위)"
     )
+    language: str | None = Field(
+        default=None, description="인식된 주요 언어 ('ko', 'en', 'ja', 'zh', 'mixed')"
+    )
+    provider: str = Field(default="clova", description="사용한 OCR 공급자 ('clova' 또는 'bedrock')")
 
 
 class OcrCoverResponse(BaseModel):
