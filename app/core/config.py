@@ -35,5 +35,16 @@ class Settings(BaseSettings):
     CLOVA_OCR_INVOKE_URL: str
     CLOVA_OCR_SECRET_KEY: str
 
+    # 기본 OCR 공급자 ("clova" 또는 "bedrock")
+    OCR_PROVIDER: str = "clova"
+
+    # AWS Bedrock OCR 설정
+    AWS_REGION: str = "us-east-1"
+    AWS_PROFILE: str | None = None
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: str | None = None
+    AWS_SESSION_TOKEN: str | None = None
+    BEDROCK_OCR_MODEL_ID: str = "qwen.qwen3-vl-235b-a22b"
+
 
 settings = Settings()

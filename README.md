@@ -59,14 +59,9 @@ GET http://127.0.0.1:8000/health
 pytest
 ```
 
-## PostgreSQL 및 Alembic 개발환경 (CLIAR-39, CLIAR-123 이후 optional)
+## PostgreSQL 및 Alembic 개발환경 (CLIAR-39)
 
-**CLIAR-123 기준으로 backend-record는 CLOVA OCR 전용 서비스이며, Scrap
-등 PostgreSQL 데이터 저장 책임을 갖지 않습니다(CLIAR-121). `DATABASE_URL`은
-더 이상 필수 배포 의존성이 아니며, 설정하지 않아도 애플리케이션은 정상
-기동합니다.** 아래 내용은 과거 migration history를 로컬에서 다뤄야 하는
-경우를 위한 참고용입니다.
-
+backend-record는 SQLAlchemy + Alembic + PostgreSQL 기반으로 데이터를 관리합니다.
 로컬 개발 환경에서는 backend-auth의 PostgreSQL(`localhost:5432`)과 충돌하지 않도록
 아래 기준을 사용합니다.
 
@@ -76,11 +71,10 @@ pytest
 | Port | `5433` |
 | DB명 | `dont_paw_get_record` |
 
-### DATABASE_URL 설정 (선택)
+### DATABASE_URL 설정
 
-`DATABASE_URL`은 기본값이 없으면 `None`으로 동작하는 선택 환경변수입니다.
-Alembic으로 과거 migration history를 로컬에서 다뤄야 하는 경우에만
-`.env.example`을 참고해 `.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
+`DATABASE_URL`은 기본값이 없는 필수 환경변수입니다. `.env.example`을 참고해
+`.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
 
 ```
 DATABASE_URL=postgresql+psycopg://record_user:record_password@localhost:5433/dont_paw_get_record
@@ -127,27 +121,20 @@ alembic revision --autogenerate -m "<message>"
 이번 단계는 SQLAlchemy/Alembic이 PostgreSQL과 연결될 수 있는 기반 구조만
 준비하는 것을 목표로 합니다.
 
-### Legacy scrap migration 주의사항 (CLIAR-121)
-
-Scrap 저장 책임이 `backend-book`으로 이전되어 이 저장소에서 Scrap
-model/API/repository를 제거했습니다(`alembic/versions/0bed2a9a23f9_create_scrap_table.py`는
-과거 migration history이므로 삭제/수정하지 않았습니다). 배포된 DB에는
-과거 `scrap` 테이블이 여전히 남아 있을 수 있습니다. `alembic revision
---autogenerate` 실행 시 `scrap` 테이블에 대한 DROP이 자동 제안될 수
-있는데, 별도의 DB cleanup 결정/Jira 없이는 이를 그대로 받아들이지
-마세요.
-
-## CLOVA OCR 문장 텍스트 추출 API (CLIAR-44)
+## OCR 문장 텍스트 추출 API (CLOVA OCR / AWS Bedrock Qwen3-VL)
 
 Frontend에서 Crop/회전까지 완료된 최종 책 문장 이미지를 업로드하면,
-backend-record가 NAVER Cloud CLOVA OCR General API를 호출해 한국어 텍스트를
-추출한 뒤 아래와 같은 형태로 반환합니다.
+선택한 OCR 엔진(NAVER Cloud CLOVA OCR 또는 AWS Bedrock Qwen3-VL)을 통해
+텍스트를 추출한 뒤 아래와 같은 형태로 반환합니다.
 
 ```
-POST /api/v1/ocr/sentences
+POST /api/v1/ocr/sentences?provider=bedrock
 Content-Type: multipart/form-data
 
 필드: image (image/jpeg 또는 image/png, 최대 50MB)
+쿼리 파라미터(선택):
+  - provider: "clova" 또는 "bedrock" (미지정 시 환경변수 OCR_PROVIDER 기본값 적용)
+  - model_id: Bedrock 사용 시 모델 ID (기본값: "qwen.qwen3-vl-235b-a22b")
 ```
 
 응답 예시:
@@ -157,68 +144,50 @@ Content-Type: multipart/form-data
   "text": "첫 번째 줄\n두 번째 줄",
   "lines": ["첫 번째 줄", "두 번째 줄"],
   "request_id": "…",
-  "confidence": 0.97
+  "confidence": 0.97,
+  "provider": "bedrock"
 }
 ```
 
 ### 환경변수 설정
 
-`CLOVA_OCR_INVOKE_URL`, `CLOVA_OCR_SECRET_KEY`는 기본값이 없는 필수
-환경변수입니다. NAVER Cloud Console에서 발급받은 실제 값을 로컬 `.env`
-파일에만 채워주세요. `.env.example`에는 placeholder만 있으며, 실제 값은
-Git에 커밋되지 않습니다.
+`.env` 파일에 필요한 OCR 공급자 설정을 구성할 수 있습니다:
 
-```
+```env
+# CLOVA OCR 설정
 CLOVA_OCR_INVOKE_URL=<실제 발급받은 Invoke URL>
 CLOVA_OCR_SECRET_KEY=<실제 발급받은 Secret Key>
+
+# 기본 OCR 공급자 ("clova" 또는 "bedrock")
+OCR_PROVIDER=clova
+
+# AWS Bedrock OCR 설정
+AWS_REGION=us-east-1
+AWS_PROFILE=kosa-mfa
+BEDROCK_OCR_MODEL_ID=qwen.qwen3-vl-235b-a22b
 ```
 
-### 로컬에서 실제 CLOVA OCR 연동 검증하기
+### Bedrock Qwen3-VL OCR 테스트 방법
 
-1. 위 환경변수를 `.env`에 채운 뒤 서버를 실행합니다.
-   ```powershell
-   uvicorn app.main:app --reload
-   ```
-2. Swagger UI(`http://127.0.0.1:8000/docs`)에서 `POST /api/v1/ocr/sentences`를
-   열고, 로컬에 있는 본인 소유의 책 문장 이미지 파일(jpg/png)을 업로드해
-   테스트합니다.
-3. 또는 curl로 검증할 수 있습니다. (`<path-to-image>`는 로컬 이미지 경로)
-   ```powershell
-   curl.exe -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences" `
-     -F "image=@<path-to-image>;type=image/jpeg"
-   ```
+#### 1. CLI 스크립트로 직접 테스트하기
+별도의 서버 실행 없이 바로 Bedrock Qwen3-VL 모델을 호출해볼 수 있는 테스트 스크립트가 제공됩니다.
 
-테스트에 사용한 실제 이미지 파일은 Git에 추가하지 마세요.
+```bash
+# 자동 생성된 샘플 책 표지 이미지로 테스트
+AWS_PROFILE=kosa-mfa uv run python scripts/test_bedrock_ocr.py
 
-일반 `pytest` 실행 시에는 CLOVA OCR API를 실제로 호출하지 않으며, httpx
-호출은 모두 mock으로 대체되어 있습니다.
-
-## 책 표지 OCR 제목/저자 후보 추출 API (CLIAR-131)
-
-책 표지 이미지를 업로드하면 CLOVA OCR로 텍스트를 추출한 뒤, 표지에서
-가장 큰 글씨로 인쇄된 줄을 제목 후보로, '지음/글/옮김' 등 저자 표기
-키워드가 포함된 줄을 저자 후보로 추출해 반환합니다.
-
-```
-POST /api/v1/ocr/covers
-Content-Type: multipart/form-data
-
-필드: image (image/jpeg 또는 image/png, 최대 50MB)
+# 사용자가 가진 실제 책 이미지로 테스트
+AWS_PROFILE=kosa-mfa uv run python scripts/test_bedrock_ocr.py path/to/book_cover.jpg
 ```
 
-응답 예시:
+#### 2. API 서버를 통한 테스트
+```bash
+# 서버 실행
+uv run uvicorn app.main:app --reload
 
-```json
-{
-  "title_candidate": "어떤 책의 제목",
-  "author_candidates": ["김작가 지음"],
-  "lines": ["어떤 책의 제목", "김작가 지음"],
-  "request_id": "…",
-  "confidence": 0.93
-}
+# curl로 Bedrock OCR 호출
+curl -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences?provider=bedrock" \
+  -F "image=@path/to/image.jpg;type=image/jpeg"
 ```
 
-**이 API는 OCR 후처리로 얻은 "후보"만 반환하며, 실제 도서 등록/검색/저장은
-수행하지 않습니다.** 최종 확정은 Frontend에서 사용자 확인을 거쳐야 합니다.
-CLOVA OCR 호출 로직은 `POST /api/v1/ocr/sentences`와 동일한 코드를
-재사용하며, 제목/저자 후보 추출을 위한 후처리만 다릅니다.
+일반 `pytest` 실행 시에는 실제 외부 API를 호출하지 않으며 모든 네트워크 호출이 mock으로 대체되어 안전하게 실행됩니다.

@@ -46,3 +46,24 @@ def test_settings_requires_clova_ocr_secret_key(monkeypatch):
 
     with pytest.raises(ValidationError):
         config_module.Settings(_env_file=None)
+
+
+def test_settings_bedrock_defaults_and_overrides(monkeypatch):
+    config_module = _reload_config(monkeypatch)
+    assert config_module.settings.OCR_PROVIDER == "clova"
+    assert config_module.settings.AWS_REGION == "us-east-1"
+    assert config_module.settings.BEDROCK_OCR_MODEL_ID == "qwen.qwen3-vl-235b-a22b"
+
+    config_module_custom = _reload_config(
+        monkeypatch,
+        overrides={
+            "OCR_PROVIDER": "bedrock",
+            "AWS_REGION": "ap-northeast-2",
+            "BEDROCK_OCR_MODEL_ID": "custom-model",
+            "AWS_PROFILE": "kosa-mfa",
+        },
+    )
+    assert config_module_custom.settings.OCR_PROVIDER == "bedrock"
+    assert config_module_custom.settings.AWS_REGION == "ap-northeast-2"
+    assert config_module_custom.settings.BEDROCK_OCR_MODEL_ID == "custom-model"
+    assert config_module_custom.settings.AWS_PROFILE == "kosa-mfa"
