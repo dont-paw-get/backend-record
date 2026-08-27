@@ -57,27 +57,6 @@ class ClovaOcrResult:
     confidence: float | None
 
 
-@dataclass(frozen=True)
-class ClovaOcrCoverResult:
-    """책 표지 OCR 결과를 애플리케이션 레벨로 가공한 결과.
-
-    OCR만으로 제목/저자를 100% 확정할 수 없으므로, 확정값이 아닌
-    "후보"로 표현한다. 추출 근거가 부족하면 None/빈 목록을 반환하며
-    억지로 값을 채우지 않는다.
-    """
-
-    title_candidate: str | None
-    author_candidates: list[str]
-    lines: list[str]
-    request_id: str
-    confidence: float | None
-
-
-# 책 표지에서 저자/역자를 나타낼 때 흔히 함께 쓰이는 표기. 이 키워드가
-# 포함된 줄만 저자 후보로 채택한다 (근거 없는 추측 방지).
-AUTHOR_MARKER_KEYWORDS = ("지음", "글", "저", "옮김", "역", "엮음", "편저")
-
-
 def _build_request_body(image_base64: str, image_format: str, request_id: str) -> dict:
     return {
         "version": "V2",
@@ -95,87 +74,30 @@ def _build_request_body(image_base64: str, image_format: str, request_id: str) -
     }
 
 
-def _group_fields_into_lines(fields: list[dict]) -> list[list[dict]]:
-    """CLOVA OCR fields[]를 lineBreak 기준으로 같은 줄에 속한 field끼리 묶는다.
-
-    sentence OCR과 cover OCR이 공통으로 사용하는 그룹핑 로직이다.
-    """
-    lines: list[list[dict]] = []
-    current_line: list[dict] = []
-
-    for field in fields:
-        if field.get("inferText", ""):
-            current_line.append(field)
-
-        if field.get("lineBreak") and current_line:
-            lines.append(current_line)
-            current_line = []
-
-    if current_line:
-        lines.append(current_line)
-
-    return lines
-
-
 def _build_lines_and_text(fields: list[dict]) -> tuple[str, list[str]]:
     """CLOVA OCR fields[]를 lineBreak 기준으로 줄 단위 텍스트로 재구성한다.
 
     같은 줄에 속한 서로 다른 field는 별도의 단어/어절 단위로 인식된 것이므로
-    공백 1칸으로 연결한다. NLP/문장 교정은 수행하지 않는다.
+    공백 1칸으로 연결하고, lineBreak가 True인 field에서 줄을 마무리한다.
+    빈 inferText는 무시하며, NLP/문장 교정은 수행하지 않는다.
     """
-    line_groups = _group_fields_into_lines(fields)
-    lines = [
-        " ".join(field["inferText"] for field in line_group)
-        for line_group in line_groups
-    ]
+    lines: list[str] = []
+    current_line_parts: list[str] = []
+
+    for field in fields:
+        infer_text = field.get("inferText", "")
+        if infer_text:
+            current_line_parts.append(infer_text)
+
+        if field.get("lineBreak"):
+            lines.append(" ".join(current_line_parts))
+            current_line_parts = []
+
+    if current_line_parts:
+        lines.append(" ".join(current_line_parts))
+
     text = "\n".join(lines)
     return text, lines
-
-
-def _line_box_height(line_fields: list[dict]) -> float | None:
-    """줄에 속한 field들의 boundingPoly.vertices에서 세로 높이를 계산한다.
-
-    CLOVA General V2는 version="V2"일 때만 boundingPoly를 제공한다.
-    좌표 정보가 없으면 None을 반환하며, 이 경우 글자 크기를 알 수 없으므로
-    호출부는 이 줄을 제목 크기 비교 대상에서 제외해야 한다.
-    """
-    heights: list[float] = []
-    for field in line_fields:
-        vertices = (field.get("boundingPoly") or {}).get("vertices") or []
-        ys = [v["y"] for v in vertices if isinstance(v, dict) and "y" in v]
-        if len(ys) >= 2:
-            heights.append(max(ys) - min(ys))
-
-    if not heights:
-        return None
-    return sum(heights) / len(heights)
-
-
-def _extract_title_candidate(line_groups: list[list[dict]], lines: list[str]) -> str | None:
-    """표지에서 가장 큰 글씨로 인쇄된 줄을 제목 후보로 삼는다.
-
-    책 표지는 제목을 가장 크게 배치하는 경우가 많다는 일반적인 경향을
-    이용한 단순 규칙이며, 100% 정확성을 보장하지 않는다. boundingPoly
-    좌표가 전혀 없어 글자 크기를 비교할 수 없으면 억지로 추측하지 않고
-    None을 반환한다.
-    """
-    heights = [_line_box_height(line_group) for line_group in line_groups]
-    measurable = [(h, line) for h, line in zip(heights, lines) if h is not None]
-
-    if not measurable:
-        return None
-
-    _, largest_line = max(measurable, key=lambda pair: pair[0])
-    return largest_line
-
-
-def _extract_author_candidates(lines: list[str]) -> list[str]:
-    """'지음/글/옮김' 등 저자 표기 키워드가 포함된 줄만 저자 후보로 삼는다.
-
-    키워드가 전혀 없으면 어떤 줄이 저자인지 근거가 없으므로 억지로
-    추측하지 않고 빈 목록을 반환한다.
-    """
-    return [line for line in lines if any(keyword in line for keyword in AUTHOR_MARKER_KEYWORDS)]
 
 
 def _calculate_average_confidence(fields: list[dict]) -> float | None:
@@ -189,11 +111,7 @@ def _calculate_average_confidence(fields: list[dict]) -> float | None:
     return sum(confidences) / len(confidences)
 
 
-def _extract_success_fields(response_json: dict, request_id: str) -> list[dict]:
-    """CLOVA 응답에서 SUCCESS 여부를 확인하고 fields[]를 꺼낸다.
-
-    sentence OCR과 cover OCR이 공통으로 사용하는 검증 단계이다.
-    """
+def _parse_clova_response(response_json: dict, request_id: str) -> ClovaOcrResult:
     images = response_json.get("images")
     if not images or not isinstance(images, list):
         logger.warning(
@@ -221,12 +139,6 @@ def _extract_success_fields(response_json: dict, request_id: str) -> list[dict]:
         )
         raise ClovaOcrEmptyResultError("CLOVA OCR returned no fields")
 
-    return fields
-
-
-def _parse_clova_response(response_json: dict, request_id: str) -> ClovaOcrResult:
-    fields = _extract_success_fields(response_json, request_id)
-
     text, lines = _build_lines_and_text(fields)
     if not text.strip():
         logger.warning(
@@ -251,55 +163,21 @@ def _parse_clova_response(response_json: dict, request_id: str) -> ClovaOcrResul
     )
 
 
-def _parse_clova_cover_response(response_json: dict, request_id: str) -> ClovaOcrCoverResult:
-    fields = _extract_success_fields(response_json, request_id)
+async def extract_text_from_image(image_bytes: bytes, image_format: str) -> ClovaOcrResult:
+    """이미지 bytes를 CLOVA OCR General API로 전달해 텍스트를 추출한다.
 
-    line_groups = _group_fields_into_lines(fields)
-    lines = [
-        " ".join(field["inferText"] for field in line_group) for line_group in line_groups
-    ]
-
-    if not any(line.strip() for line in lines):
-        logger.warning(
-            "CLOVA OCR returned empty text after parsing fields (requestId=%s)",
-            request_id,
-        )
-        raise ClovaOcrEmptyResultError("CLOVA OCR returned empty text")
-
-    title_candidate = _extract_title_candidate(line_groups, lines)
-    author_candidates = _extract_author_candidates(lines)
-    confidence = _calculate_average_confidence(fields)
-
-    logger.info(
-        "CLOVA OCR cover parsed successfully: lines=%d, has_title=%s, "
-        "author_candidate_count=%d (requestId=%s)",
-        len(lines),
-        title_candidate is not None,
-        len(author_candidates),
-        request_id,
-    )
-
-    return ClovaOcrCoverResult(
-        title_candidate=title_candidate,
-        author_candidates=author_candidates,
-        lines=lines,
-        request_id=request_id,
-        confidence=confidence,
-    )
-
-
-async def _call_clova_ocr(image_bytes: bytes, image_format: str, request_id: str) -> dict:
-    """CLOVA OCR General API를 호출하고 응답 JSON을 반환한다.
-
-    sentence OCR과 cover OCR이 공통으로 사용하는 HTTP 호출 로직이다.
-    요청 payload 구성, timeout/HTTP 오류 처리, status/JSON 검증까지
-    이 함수 하나로 통일해 두 벌의 CLOVA 호출 코드가 생기지 않도록 한다.
+    Args:
+        image_bytes: 업로드된 이미지의 원본 바이트.
+        image_format: CLOVA OCR에 전달할 이미지 포맷 ("jpg" 또는 "png").
 
     Raises:
         ClovaOcrTimeoutError: 호출이 timeout된 경우.
         ClovaOcrRequestFailedError: 호출 자체가 실패했거나 응답 구조가
             예상과 다른 경우.
+        ClovaOcrRecognitionFailedError: inferResult가 SUCCESS가 아닌 경우.
+        ClovaOcrEmptyResultError: 인식된 텍스트가 없는 경우.
     """
+    request_id = str(uuid.uuid4())
     image_base64 = base64.b64encode(image_bytes).decode("ascii")
     request_body = _build_request_body(image_base64, image_format, request_id)
 
@@ -349,54 +227,11 @@ async def _call_clova_ocr(image_bytes: bytes, image_format: str, request_id: str
         )
 
     try:
-        return response.json()
+        response_json = response.json()
     except ValueError as exc:
         logger.warning(
             "CLOVA OCR returned invalid JSON (requestId=%s)", request_id
         )
         raise ClovaOcrRequestFailedError("CLOVA OCR returned invalid JSON") from exc
 
-
-async def extract_text_from_image(image_bytes: bytes, image_format: str) -> ClovaOcrResult:
-    """이미지 bytes를 CLOVA OCR General API로 전달해 문장 텍스트를 추출한다.
-
-    Args:
-        image_bytes: 업로드된 이미지의 원본 바이트.
-        image_format: CLOVA OCR에 전달할 이미지 포맷 ("jpg" 또는 "png").
-
-    Raises:
-        ClovaOcrTimeoutError: 호출이 timeout된 경우.
-        ClovaOcrRequestFailedError: 호출 자체가 실패했거나 응답 구조가
-            예상과 다른 경우.
-        ClovaOcrRecognitionFailedError: inferResult가 SUCCESS가 아닌 경우.
-        ClovaOcrEmptyResultError: 인식된 텍스트가 없는 경우.
-    """
-    request_id = str(uuid.uuid4())
-    response_json = await _call_clova_ocr(image_bytes, image_format, request_id)
     return _parse_clova_response(response_json, request_id)
-
-
-async def extract_book_cover_candidates(
-    image_bytes: bytes, image_format: str
-) -> ClovaOcrCoverResult:
-    """책 표지 이미지에서 CLOVA OCR로 텍스트를 추출하고 제목/저자 후보를 도출한다.
-
-    sentence OCR(extract_text_from_image)과 동일한 CLOVA HTTP 호출
-    로직(_call_clova_ocr)을 재사용하며, 결과 후처리(제목/저자 후보 추출)만
-    다르다. OCR만으로 제목/저자를 확정할 수 없으므로 결과는 "후보"이며,
-    추출 근거가 부족하면 None/빈 목록을 반환한다.
-
-    Args:
-        image_bytes: 업로드된 이미지의 원본 바이트.
-        image_format: CLOVA OCR에 전달할 이미지 포맷 ("jpg" 또는 "png").
-
-    Raises:
-        ClovaOcrTimeoutError: 호출이 timeout된 경우.
-        ClovaOcrRequestFailedError: 호출 자체가 실패했거나 응답 구조가
-            예상과 다른 경우.
-        ClovaOcrRecognitionFailedError: inferResult가 SUCCESS가 아닌 경우.
-        ClovaOcrEmptyResultError: 인식된 텍스트가 없는 경우.
-    """
-    request_id = str(uuid.uuid4())
-    response_json = await _call_clova_ocr(image_bytes, image_format, request_id)
-    return _parse_clova_cover_response(response_json, request_id)

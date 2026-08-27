@@ -38,19 +38,20 @@ def test_settings_reads_database_url_from_env(monkeypatch):
     assert config_module.settings.DATABASE_URL == TEST_DATABASE_URL
 
 
-def test_database_url_defaults_to_none_when_absent(monkeypatch):
-    """CLIAR-123: backend-record는 더 이상 DB 배포 의존성을 필수로 갖지 않는다.
-
-    DATABASE_URL은 더 이상 기본값 없는 필수 필드가 아니며, 값이 없으면
-    None으로 기본 동작해야 한다. 이 덕분에 DB 환경변수가 전혀 없는
-    배포 환경에서도 app.main import/startup이 실패하지 않는다.
+def test_settings_requires_database_url(monkeypatch):
+    """DATABASE_URL에 기본값이 없으므로, 값이 없으면 설정 로딩이 실패해야 한다.
 
     app/core/config.py에는 module-level `settings = Settings()`가 있어
-    모듈 import 시점에 곧바로 검증이 수행된다. 먼저 TEST_DATABASE_URL을
-    주입한 상태로 모듈을 import해 module-level 초기화를 통과시킨 뒤,
-    DATABASE_URL을 제거하고 _env_file=None으로 .env 로딩을 비활성화한
-    채 Settings()를 직접 호출해도 예외 없이 생성되고 DATABASE_URL이
-    None인지 확인한다.
+    모듈 import 시점에 곧바로 검증이 수행된다. .env 파일이 없는 환경
+    (예: CI)에서 DATABASE_URL 없이 그대로 import하면 이 import 자체가
+    ValidationError로 실패해버려 아래 `Settings(_env_file=None)` 호출까지
+    도달하지 못한다.
+
+    따라서 먼저 TEST_DATABASE_URL을 주입한 상태로 모듈을 import해
+    module-level 초기화를 안전하게 통과시킨 뒤, DATABASE_URL을 제거하고
+    _env_file=None으로 .env 로딩을 비활성화한 채 Settings()를 직접
+    호출해 검증한다. 이 순서 덕분에 로컬/CI의 실제 .env 존재 여부와
+    무관하게 항상 동일하게 동작한다.
     """
     monkeypatch.setenv("DATABASE_URL", TEST_DATABASE_URL)
     sys.modules.pop("app.core.config", None)
@@ -58,8 +59,8 @@ def test_database_url_defaults_to_none_when_absent(monkeypatch):
 
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
-    settings_without_db = config_module.Settings(_env_file=None)
-    assert settings_without_db.DATABASE_URL is None
+    with pytest.raises(ValidationError):
+        config_module.Settings(_env_file=None)
 
 
 def test_database_module_exposes_expected_objects(monkeypatch):
