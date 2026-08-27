@@ -59,9 +59,14 @@ GET http://127.0.0.1:8000/health
 pytest
 ```
 
-## PostgreSQL 및 Alembic 개발환경 (CLIAR-39)
+## PostgreSQL 및 Alembic 개발환경 (CLIAR-39, CLIAR-123 이후 optional)
 
-backend-record는 SQLAlchemy + Alembic + PostgreSQL 기반으로 데이터를 관리합니다.
+**CLIAR-123 기준으로 backend-record는 CLOVA OCR 전용 서비스이며, Scrap
+등 PostgreSQL 데이터 저장 책임을 갖지 않습니다(CLIAR-121). `DATABASE_URL`은
+더 이상 필수 배포 의존성이 아니며, 설정하지 않아도 애플리케이션은 정상
+기동합니다.** 아래 내용은 과거 migration history를 로컬에서 다뤄야 하는
+경우를 위한 참고용입니다.
+
 로컬 개발 환경에서는 backend-auth의 PostgreSQL(`localhost:5432`)과 충돌하지 않도록
 아래 기준을 사용합니다.
 
@@ -71,10 +76,11 @@ backend-record는 SQLAlchemy + Alembic + PostgreSQL 기반으로 데이터를 �
 | Port | `5433` |
 | DB명 | `dont_paw_get_record` |
 
-### DATABASE_URL 설정
+### DATABASE_URL 설정 (선택)
 
-`DATABASE_URL`은 기본값이 없는 필수 환경변수입니다. `.env.example`을 참고해
-`.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
+`DATABASE_URL`은 기본값이 없으면 `None`으로 동작하는 선택 환경변수입니다.
+Alembic으로 과거 migration history를 로컬에서 다뤄야 하는 경우에만
+`.env.example`을 참고해 `.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
 
 ```
 DATABASE_URL=postgresql+psycopg://record_user:record_password@localhost:5433/dont_paw_get_record
