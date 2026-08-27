@@ -59,14 +59,9 @@ GET http://127.0.0.1:8000/health
 pytest
 ```
 
-## PostgreSQL 및 Alembic 개발환경 (CLIAR-39, CLIAR-123 이후 optional)
+## PostgreSQL 및 Alembic 개발환경 (CLIAR-39)
 
-**CLIAR-123 기준으로 backend-record는 CLOVA OCR 전용 서비스이며, Scrap
-등 PostgreSQL 데이터 저장 책임을 갖지 않습니다(CLIAR-121). `DATABASE_URL`은
-더 이상 필수 배포 의존성이 아니며, 설정하지 않아도 애플리케이션은 정상
-기동합니다.** 아래 내용은 과거 migration history를 로컬에서 다뤄야 하는
-경우를 위한 참고용입니다.
-
+backend-record는 SQLAlchemy + Alembic + PostgreSQL 기반으로 데이터를 관리합니다.
 로컬 개발 환경에서는 backend-auth의 PostgreSQL(`localhost:5432`)과 충돌하지 않도록
 아래 기준을 사용합니다.
 
@@ -76,11 +71,10 @@ pytest
 | Port | `5433` |
 | DB명 | `dont_paw_get_record` |
 
-### DATABASE_URL 설정 (선택)
+### DATABASE_URL 설정
 
-`DATABASE_URL`은 기본값이 없으면 `None`으로 동작하는 선택 환경변수입니다.
-Alembic으로 과거 migration history를 로컬에서 다뤄야 하는 경우에만
-`.env.example`을 참고해 `.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
+`DATABASE_URL`은 기본값이 없는 필수 환경변수입니다. `.env.example`을 참고해
+`.env` 파일에 아래와 같은 형식으로 값을 채워주세요.
 
 ```
 DATABASE_URL=postgresql+psycopg://record_user:record_password@localhost:5433/dont_paw_get_record
@@ -126,16 +120,6 @@ alembic revision --autogenerate -m "<message>"
 **CLIAR-39에서는 실제 업무 테이블 및 migration revision을 생성하지 않습니다.**
 이번 단계는 SQLAlchemy/Alembic이 PostgreSQL과 연결될 수 있는 기반 구조만
 준비하는 것을 목표로 합니다.
-
-### Legacy scrap migration 주의사항 (CLIAR-121)
-
-Scrap 저장 책임이 `backend-book`으로 이전되어 이 저장소에서 Scrap
-model/API/repository를 제거했습니다(`alembic/versions/0bed2a9a23f9_create_scrap_table.py`는
-과거 migration history이므로 삭제/수정하지 않았습니다). 배포된 DB에는
-과거 `scrap` 테이블이 여전히 남아 있을 수 있습니다. `alembic revision
---autogenerate` 실행 시 `scrap` 테이블에 대한 DROP이 자동 제안될 수
-있는데, 별도의 DB cleanup 결정/Jira 없이는 이를 그대로 받아들이지
-마세요.
 
 ## CLOVA OCR 문장 텍스트 추출 API (CLIAR-44)
 
@@ -192,33 +176,3 @@ CLOVA_OCR_SECRET_KEY=<실제 발급받은 Secret Key>
 
 일반 `pytest` 실행 시에는 CLOVA OCR API를 실제로 호출하지 않으며, httpx
 호출은 모두 mock으로 대체되어 있습니다.
-
-## 책 표지 OCR 제목/저자 후보 추출 API (CLIAR-131)
-
-책 표지 이미지를 업로드하면 CLOVA OCR로 텍스트를 추출한 뒤, 표지에서
-가장 큰 글씨로 인쇄된 줄을 제목 후보로, '지음/글/옮김' 등 저자 표기
-키워드가 포함된 줄을 저자 후보로 추출해 반환합니다.
-
-```
-POST /api/v1/ocr/covers
-Content-Type: multipart/form-data
-
-필드: image (image/jpeg 또는 image/png, 최대 50MB)
-```
-
-응답 예시:
-
-```json
-{
-  "title_candidate": "어떤 책의 제목",
-  "author_candidates": ["김작가 지음"],
-  "lines": ["어떤 책의 제목", "김작가 지음"],
-  "request_id": "…",
-  "confidence": 0.93
-}
-```
-
-**이 API는 OCR 후처리로 얻은 "후보"만 반환하며, 실제 도서 등록/검색/저장은
-수행하지 않습니다.** 최종 확정은 Frontend에서 사용자 확인을 거쳐야 합니다.
-CLOVA OCR 호출 로직은 `POST /api/v1/ocr/sentences`와 동일한 코드를
-재사용하며, 제목/저자 후보 추출을 위한 후처리만 다릅니다.

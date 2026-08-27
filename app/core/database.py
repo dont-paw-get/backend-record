@@ -11,7 +11,8 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 class Base(DeclarativeBase):
     """모든 SQLAlchemy ORM 모델의 베이스 클래스.
 
-    SQLAlchemy 모델은 공통 Base를 상속하여 정의한다.
+    이번 Jira(CLIAR-39)에서는 실제 도메인 모델을 만들지 않습니다.
+    향후 BOOK/SCRAP 등 모델이 이 Base를 상속해 정의됩니다.
     """
 
     pass
