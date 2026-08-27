@@ -1,0 +1,9 @@
+# ⚠️ prod 배포는 아직 사용하지 않습니다. dev 배포가 안정화되면 아래 주석을 해제하세요.
+#
+# # 상용 환경에서 base ConfigMap 위에 덮어쓸 값
+# apiVersion: v1
+# kind: ConfigMap
+# metadata:
+#   name: backend-record-config
+# data:
+#   APP_ENV: "production"

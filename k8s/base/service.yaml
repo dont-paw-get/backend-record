@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend-record
+  labels:
+    app.kubernetes.io/name: backend-record
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backend-record
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

@@ -7,12 +7,13 @@ CLOVA OCR General API로 텍스트를 추출한 뒤, 사용하기 쉬운 형태�
 """
 from fastapi import APIRouter, HTTPException, UploadFile, status
 
-from app.schemas.ocr import OcrSentencesResponse
+from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
 from app.services.clova_ocr import (
     ClovaOcrEmptyResultError,
     ClovaOcrRecognitionFailedError,
     ClovaOcrRequestFailedError,
     ClovaOcrTimeoutError,
+    extract_book_cover_candidates,
     extract_text_from_image,
 )
 
@@ -54,6 +55,44 @@ async def create_ocr_sentences(image: UploadFile) -> OcrSentencesResponse:
 
     return OcrSentencesResponse(
         text=result.text,
+        lines=result.lines,
+        request_id=result.request_id,
+        confidence=result.confidence,
+    )
+
+
+@router.post("/covers", response_model=OcrCoverResponse)
+async def create_ocr_cover(image: UploadFile) -> OcrCoverResponse:
+    """책 표지 이미지를 업로드받아 제목/저자 후보를 추출한다.
+
+    OCR 결과만으로는 제목/저자를 확정할 수 없으므로 응답은 "후보"이며,
+    실제 도서 등록/검색/저장은 이 API의 책임이 아니다.
+    """
+    image_format = _validate_content_type(image.content_type)
+    image_bytes = await image.read()
+    _validate_image_bytes(image_bytes)
+
+    try:
+        result = await extract_book_cover_candidates(image_bytes, image_format)
+    except ClovaOcrTimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="OCR 요청이 시간 초과되었습니다. 잠시 후 다시 시도해주세요.",
+        )
+    except (ClovaOcrRequestFailedError, ClovaOcrRecognitionFailedError):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="OCR 서비스 처리 중 오류가 발생했습니다.",
+        )
+    except ClovaOcrEmptyResultError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="이미지에서 인식된 텍스트가 없습니다.",
+        )
+
+    return OcrCoverResponse(
+        title_candidate=result.title_candidate,
+        author_candidates=result.author_candidates,
         lines=result.lines,
         request_id=result.request_id,
         confidence=result.confidence,
