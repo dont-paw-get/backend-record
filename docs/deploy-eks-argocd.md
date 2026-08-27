@@ -41,7 +41,7 @@ k8s/
   base/                             # 공통 매니페스트 (네임스페이스·이미지태그 없음)
     kustomization.yaml
     configmap.yaml                  # 비민감 설정 (APP_HOST/PORT 등)
-    deployment.yaml                 # 앱 실행 (마이그레이션 initContainer + /health 프로브)
+    deployment.yaml                 # 앱 실행 (FastAPI 단일 container + /health 프로브)
     service.yaml                    # ClusterIP Service
     ingress.yaml                    # ALB Ingress (외부 노출)
   overlays/
@@ -85,7 +85,6 @@ argocd/
 kubectl create namespace dpyb-record-dev
 kubectl create secret generic backend-record-secret \
   --namespace dpyb-record-dev \
-  --from-literal=DATABASE_URL='postgresql+psycopg://user:pass@dev-rds-host:5432/db' \
   --from-literal=CLOVA_OCR_INVOKE_URL='https://xxxxx.apigw.ntruss.com/custom/v1/00000/xxxxxxxx/general' \
   --from-literal=CLOVA_OCR_SECRET_KEY='xxxxxxxx'
 
@@ -101,7 +100,6 @@ kubectl get pods,svc,ingress -n dpyb-record-dev
 kubectl create namespace dpyb-record
 kubectl create secret generic backend-record-secret \
   --namespace dpyb-record \
-  --from-literal=DATABASE_URL='postgresql+psycopg://user:pass@prod-rds-host:5432/db' \
   --from-literal=CLOVA_OCR_INVOKE_URL='...' \
   --from-literal=CLOVA_OCR_SECRET_KEY='...'
 kubectl apply -f argocd/application-prod.yaml
@@ -121,7 +119,6 @@ kubectl kustomize k8s/overlays/dev
 # Dockerfile 검증
 docker build -t backend-record:local .
 docker run --rm -p 8000:8000 \
-  -e DATABASE_URL='postgresql+psycopg://...' \
   -e CLOVA_OCR_INVOKE_URL='...' \
   -e CLOVA_OCR_SECRET_KEY='...' \
   backend-record:local
