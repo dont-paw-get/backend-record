@@ -128,6 +128,81 @@ def test_no_author_marker_returns_empty_author_candidates(monkeypatch):
     assert result.author_candidates == []
 
 
+# --- 짧은 저자 marker("저", "역", "글")의 substring 오탐 방지 테스트 (CLIAR-136) ---
+
+
+@pytest.mark.parametrize(
+    "author_line",
+    [
+        "김영하 지음",
+        "이수진 지음",
+        "한강 저",
+        "홍길동 옮김",
+        "김철수 편저",
+        "박작가 글",
+        "이번역 역",
+    ],
+)
+def test_valid_author_marker_lines_are_recognized(monkeypatch, author_line):
+    """실제 저자/역자 표기로 사용된 줄은 그대로 저자 후보로 인식되어야 한다."""
+    fields = [
+        _field("책 제목", 0, 100, True),
+        _field(author_line, 150, 170, True),
+    ]
+    _install_fake_client(monkeypatch, _success_body(fields))
+
+    result = _run(clova_ocr.extract_book_cover_candidates(b"bytes", "jpg"))
+
+    assert result.author_candidates == [author_line]
+
+
+@pytest.mark.parametrize(
+    "non_author_line",
+    [
+        "저장한 스크랩 문장 편집",
+        "저장한 스크랩 문장 삭제",
+        "저장한 문장",
+        "저장한 스크랩",
+        "역사 이야기",
+        "역량 강화",
+        "글자가 큽니다",
+        "글쓰기 방법",
+    ],
+)
+def test_lines_with_short_marker_as_substring_are_not_false_positives(
+    monkeypatch, non_author_line
+):
+    """짧은 marker("저", "역", "글")가 일반 단어 내부에 포함된 줄은
+    저자 후보로 잘못 인식되면 안 된다 (CLIAR-136 회귀 재현)."""
+    fields = [
+        _field("책 제목", 0, 100, True),
+        _field(non_author_line, 150, 170, True),
+    ]
+    _install_fake_client(monkeypatch, _success_body(fields))
+
+    result = _run(clova_ocr.extract_book_cover_candidates(b"bytes", "jpg"))
+
+    assert non_author_line not in result.author_candidates
+
+
+def test_ocr_test_png_reproduction_case_has_no_false_positive_author_candidates(monkeypatch):
+    """dev에서 실제로 재현된 ocr-test.png 케이스: 스크랩 문장들이 저자 후보로
+    잘못 추출되지 않아야 한다."""
+    lines_text = [
+        "촬영한 감명 구절 이미지를 텍스트로",
+        "변환/수정된 문장을 책·페이지와 함께",
+        "특정 책의 스크랩 문장 모아보기",
+        "저장한 스크랩 문장 편집",
+        "저장한 스크랩 문장 삭제",
+    ]
+    fields = [_field(line, 0, 50, True) for line in lines_text]
+    _install_fake_client(monkeypatch, _success_body(fields))
+
+    result = _run(clova_ocr.extract_book_cover_candidates(b"bytes", "jpg"))
+
+    assert result.author_candidates == []
+
+
 def test_missing_bounding_box_info_returns_none_title_candidate(monkeypatch):
     """boundingPoly 정보가 전혀 없으면 글자 크기를 알 수 없으므로 제목 후보를
     억지로 추측하지 않고 None을 반환한다."""
