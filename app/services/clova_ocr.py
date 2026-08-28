@@ -73,9 +73,37 @@ class ClovaOcrCoverResult:
     confidence: float | None
 
 
-# 책 표지에서 저자/역자를 나타낼 때 흔히 함께 쓰이는 표기. 이 키워드가
-# 포함된 줄만 저자 후보로 채택한다 (근거 없는 추측 방지).
-AUTHOR_MARKER_KEYWORDS = ("지음", "글", "저", "옮김", "역", "엮음", "편저")
+# 책 표지에서 저자/역자를 나타낼 때 흔히 함께 쓰이는 표기.
+#
+# "지음"/"옮김"/"엮음"/"편저"처럼 2글자 이상인 표기는 일반 단어 내부에
+# 우연히 포함될 가능성이 낮아 부분 문자열(substring) 매칭으로 판별한다.
+AUTHOR_MARKER_KEYWORDS_SUBSTRING = ("지음", "옮김", "엮음", "편저")
+
+# "저"/"역"/"글"처럼 한 글자 표기는 "저장", "역사", "역량", "글자", "글쓰기"
+# 등 일반 단어 내부에 흔히 포함되어 단순 substring 매칭으로는 오탐이
+# 발생한다(CLIAR-136). 저자 표기로 쓰일 때는 대개 "이름 + 공백 + marker"
+# 형태로 줄 끝에 독립된 단어로 등장하므로, 공백으로 구분된 마지막 토큰이
+# marker와 정확히 일치할 때만 저자 표기로 인정한다.
+AUTHOR_MARKER_KEYWORDS_STANDALONE_SUFFIX = ("저", "역", "글")
+
+
+def _line_has_author_marker(line: str) -> bool:
+    """줄이 실제 저자/역자 표기를 포함하는지 판별한다.
+
+    - 2글자 이상 marker("지음" 등): 부분 문자열로만 있어도 인정한다.
+    - 1글자 marker("저"/"역"/"글"): 공백으로 구분된 마지막 토큰이 marker와
+      정확히 같을 때만 인정한다. 이렇게 하면 "저장한 문장"처럼 marker가
+      단어 중간에 섞여 있는 경우를 배제하면서, "한강 저"처럼 독립된
+      토큰으로 쓰인 정상 표기는 그대로 인식한다.
+    """
+    if any(keyword in line for keyword in AUTHOR_MARKER_KEYWORDS_SUBSTRING):
+        return True
+
+    tokens = line.split()
+    if tokens and tokens[-1] in AUTHOR_MARKER_KEYWORDS_STANDALONE_SUFFIX:
+        return True
+
+    return False
 
 
 def _build_request_body(image_base64: str, image_format: str, request_id: str) -> dict:
@@ -170,12 +198,12 @@ def _extract_title_candidate(line_groups: list[list[dict]], lines: list[str]) ->
 
 
 def _extract_author_candidates(lines: list[str]) -> list[str]:
-    """'지음/글/옮김' 등 저자 표기 키워드가 포함된 줄만 저자 후보로 삼는다.
+    """'지음/글/옮김' 등 저자 표기가 포함된 줄만 저자 후보로 삼는다.
 
-    키워드가 전혀 없으면 어떤 줄이 저자인지 근거가 없으므로 억지로
+    저자 표기가 전혀 없으면 어떤 줄이 저자인지 근거가 없으므로 억지로
     추측하지 않고 빈 목록을 반환한다.
     """
-    return [line for line in lines if any(keyword in line for keyword in AUTHOR_MARKER_KEYWORDS)]
+    return [line for line in lines if _line_has_author_marker(line)]
 
 
 def _calculate_average_confidence(fields: list[dict]) -> float | None:
