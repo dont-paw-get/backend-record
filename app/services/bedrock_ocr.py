@@ -6,6 +6,7 @@ CLOVA OCR과 동일한 인터페이스 규격을 제공하여 상호 교체가 �
 import asyncio
 from dataclasses import dataclass
 import logging
+import re
 import uuid
 
 import boto3
@@ -61,6 +62,7 @@ class BedrockOcrCoverResult:
     lines: list[str]
     request_id: str
     confidence: float | None = None
+    isbn: str | None = None
 
 
 def get_bedrock_runtime_client():
@@ -395,6 +397,40 @@ def _sync_invoke_converse(
     )
 
 
+# ISBN 표기에서 숫자(및 ISBN-10 체크숫자 X)만 남기기 위한 정규식.
+_ISBN_NON_DIGIT_RE = re.compile(r"[^0-9Xx]")
+
+
+def _extract_isbn(lines: list[str]) -> str | None:
+    """OCR 줄 목록에서 ISBN을 찾아 하이픈·공백을 제거한 숫자 문자열로 반환한다.
+
+    책 표지 하단에는 보통 'ISBN 979-11-86343-13-5' 같은 라벨 표기와
+    바코드 아래 숫자('9 791186 343135')가 함께 인쇄된다. 둘 다 하이픈/
+    공백만 다를 뿐 같은 값이므로, 구분자를 제거하고 다음 우선순위로 찾는다.
+
+    1. 'ISBN' 라벨이 붙은 줄 (가장 신뢰도 높음)
+    2. 라벨이 없으면 모든 줄에서 숫자만 추출
+
+    각 후보에 대해 ISBN-13(978/979로 시작하는 13자리) → ISBN-10(10자리,
+    마지막 자리는 X 허용) 순으로 검사하고, 조건을 만족하는 첫 값을 반환한다.
+    찾지 못하면 None.
+
+    예: ['ISBN 979-11-86343-13-5'] -> '9791186343135'
+    """
+    labeled = [line for line in lines if "ISBN" in line.upper()]
+    candidates = labeled or list(lines)
+
+    for line in candidates:
+        digits = _ISBN_NON_DIGIT_RE.sub("", line).upper()
+        # ISBN-13: 978/979 접두사 + 13자리 숫자
+        if len(digits) == 13 and digits.isdigit() and digits[:3] in ("978", "979"):
+            return digits
+        # ISBN-10: 9자리 숫자 + 체크숫자(0~9 또는 X)
+        if len(digits) == 10 and digits[:9].isdigit() and (digits[9].isdigit() or digits[9] == "X"):
+            return digits
+    return None
+
+
 def _parse_cover_content(raw_text: str) -> tuple[str | None, list[str], list[str]]:
     """책 표지 OCR 모델 응답에서 title/author/lines를 추출한다.
 
@@ -460,6 +496,8 @@ def _sync_invoke_cover_converse(
         logger.warning("Bedrock cover OCR returned empty result (requestId=%s)", req_id)
         raise BedrockOcrEmptyResultError("Bedrock cover OCR returned empty result")
 
+    isbn = _extract_isbn(lines)
+
     logger.info(
         "Bedrock cover OCR parsed successfully: has_title=%s, "
         "author_candidate_count=%d, lines=%d (requestId=%s)",
@@ -479,6 +517,7 @@ def _sync_invoke_cover_converse(
         lines=lines,
         request_id=req_id,
         confidence=None,
+        isbn=isbn,
     )
 
 

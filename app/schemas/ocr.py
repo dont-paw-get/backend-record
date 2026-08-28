@@ -1,4 +1,6 @@
 """OCR API 요청/응답 스키마."""
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -44,5 +46,28 @@ class OcrCoverResponse(BaseModel):
         description=(
             "인식 신뢰도. AWS Bedrock Qwen3-VL은 공식 OCR confidence를 "
             "제공하지 않으므로 항상 None을 반환한다."
+        ),
+    )
+    isbn: str | None = Field(
+        default=None,
+        description="표지에서 인식한 ISBN (하이픈·공백 제거된 숫자 문자열). 없으면 None",
+    )
+    book_id: Any = Field(
+        default=None,
+        description="backend-book 서재에 등록된 책의 ID (POST /api/v1/library/books 결과)",
+    )
+    already_registered: bool = Field(
+        default=False,
+        description=(
+            "인식한 ISBN이 이미 사용자의 서재에 등록되어 있었으면 true. "
+            "이 경우 새로 등록하지 않고 기존 book_id를 반환한다."
+        ),
+    )
+    book: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "backend-book /search에서 조회한 도서 정보. 서재에 이미 있으면 저장된 "
+            "도서 데이터, 알라딘에서 찾았으면 외부 조회 결과다. 어디에도 없으면 None "
+            "(OCR 후보로 폴백 등록)."
         ),
     )

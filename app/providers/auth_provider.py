@@ -59,20 +59,31 @@ async def fetch_member_id(access_token: str) -> Any:
     return member_id
 
 
-async def get_current_member_id(
+def get_access_token(
     credentials: Annotated[
         HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)
     ],
-) -> Any:
-    """Authorization: Bearer <token> 헤더에서 access token을 받아 member_id를 조회하는 의존성."""
+) -> str:
+    """Authorization: Bearer <token> 헤더에서 raw access token을 꺼내는 의존성.
+
+    backend-book 등 다른 백엔드로 사용자의 토큰을 그대로 forward해야 하는
+    핸들러에서 사용한다. member_id가 필요하면 get_current_member_id를 쓴다.
+    """
     if credentials is None or not credentials.credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="access token이 필요합니다.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    return credentials.credentials
+
+
+async def get_current_member_id(
+    access_token: Annotated[str, Depends(get_access_token)],
+) -> Any:
+    """Authorization: Bearer <token> 헤더에서 access token을 받아 member_id를 조회하는 의존성."""
     try:
-        return await fetch_member_id(credentials.credentials)
+        return await fetch_member_id(access_token)
     except AuthProviderError:
          raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
