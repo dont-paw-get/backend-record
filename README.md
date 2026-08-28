@@ -121,20 +121,21 @@ alembic revision --autogenerate -m "<message>"
 이번 단계는 SQLAlchemy/Alembic이 PostgreSQL과 연결될 수 있는 기반 구조만
 준비하는 것을 목표로 합니다.
 
-## OCR 문장 텍스트 추출 API (CLOVA OCR / AWS Bedrock Qwen3-VL)
+## OCR 문장/책 표지 텍스트 추출 API (AWS Bedrock Qwen3-VL)
 
-Frontend에서 Crop/회전까지 완료된 최종 책 문장 이미지를 업로드하면,
-선택한 OCR 엔진(NAVER Cloud CLOVA OCR 또는 AWS Bedrock Qwen3-VL)을 통해
-텍스트를 추출한 뒤 아래와 같은 형태로 반환합니다.
+Frontend에서 Crop/회전까지 완료된 최종 책 문장/표지 이미지를 업로드하면,
+AWS Bedrock Qwen3-VL을 통해 텍스트를 추출한 뒤 아래와 같은 형태로
+반환합니다. (CLIAR-143: OCR Provider를 NAVER CLOVA OCR에서 AWS Bedrock
+Qwen3-VL로 완전히 전환했습니다. CLOVA credential은 더 이상 필요하지
+않습니다.)
 
 ```
-POST /api/v1/ocr/sentences?provider=bedrock
+POST /api/v1/ocr/sentences
 Content-Type: multipart/form-data
 
 필드: image (image/jpeg 또는 image/png, 최대 50MB)
 쿼리 파라미터(선택):
-  - provider: "clova" 또는 "bedrock" (미지정 시 환경변수 OCR_PROVIDER 기본값 적용)
-  - model_id: Bedrock 사용 시 모델 ID (기본값: "qwen.qwen3-vl-235b-a22b")
+  - model_id: 사용할 Bedrock 모델 ID (기본값: "qwen.qwen3-vl-235b-a22b")
 ```
 
 응답 예시:
@@ -149,18 +150,36 @@ Content-Type: multipart/form-data
 }
 ```
 
+책 표지에서 제목/저자 후보를 추출하는 API도 동일하게 Bedrock을 사용합니다.
+
+```
+POST /api/v1/ocr/covers
+Content-Type: multipart/form-data
+
+필드: image (image/jpeg 또는 image/png, 최대 50MB)
+```
+
+응답 예시:
+
+```json
+{
+  "title_candidate": "성공하는 인생의 비밀",
+  "author_candidates": ["이수진 지음"],
+  "lines": ["성공하는 인생의 비밀", "성공하는 사람들의 비밀을 풀어라!", "이수진 지음"],
+  "request_id": "…",
+  "confidence": null
+}
+```
+
+AWS Bedrock Qwen3-VL은 CLOVA `inferConfidence`와 동일한 의미의 공식 OCR
+confidence를 제공하지 않으므로, `/covers` 응답의 `confidence`는 항상
+`null`로 반환됩니다.
+
 ### 환경변수 설정
 
-`.env` 파일에 필요한 OCR 공급자 설정을 구성할 수 있습니다:
+`.env` 파일에 필요한 AWS Bedrock 설정을 구성할 수 있습니다:
 
 ```env
-# CLOVA OCR 설정
-CLOVA_OCR_INVOKE_URL=<실제 발급받은 Invoke URL>
-CLOVA_OCR_SECRET_KEY=<실제 발급받은 Secret Key>
-
-# 기본 OCR 공급자 ("clova" 또는 "bedrock")
-OCR_PROVIDER=clova
-
 # AWS Bedrock OCR 설정
 AWS_REGION=us-east-1
 AWS_PROFILE=kosa-mfa
@@ -186,7 +205,7 @@ AWS_PROFILE=kosa-mfa uv run python scripts/test_bedrock_ocr.py path/to/book_cove
 uv run uvicorn app.main:app --reload
 
 # curl로 Bedrock OCR 호출
-curl -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences?provider=bedrock" \
+curl -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences" \
   -F "image=@path/to/image.jpg;type=image/jpeg"
 ```
 

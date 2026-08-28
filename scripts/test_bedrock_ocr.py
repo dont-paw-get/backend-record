@@ -25,16 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# 독립 실행 시 .env 파일이 없어도 동작하도록 필수 환경변수 기본값 설정
-os.environ.setdefault(
-    "DATABASE_URL",
-    "postgresql+psycopg://test_user:test_password@localhost:5433/test_db",
-)
-os.environ.setdefault(
-    "CLOVA_OCR_INVOKE_URL",
-    "https://example.apigw.ntruss.com/custom/v1/00000/xxxxxxxx/general",
-)
-os.environ.setdefault("CLOVA_OCR_SECRET_KEY", "dummy-test-secret-key")
+
 
 from PIL import Image, ImageDraw, ImageFont
 
