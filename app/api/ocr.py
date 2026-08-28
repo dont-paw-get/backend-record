@@ -5,11 +5,12 @@ CLOVA OCR General API로 텍스트를 추출한 뒤, 사용하기 쉬운 형태�
 반환한다. CLOVA 관련 세부 구현은 app.services.clova_ocr 안에 격리되어
 있으며 이 라우터는 파일 검증과 에러 매핑만 담당한다.
 """
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 
 from app.core.config import settings
+from app.providers.auth_provider import get_current_member_id
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
 from app.services import bedrock_ocr, clova_ocr
 from app.services.bedrock_ocr import (
@@ -39,6 +40,7 @@ SUPPORTED_CONTENT_TYPES: dict[str, str] = {
 @router.post("/sentences", response_model=OcrSentencesResponse)
 async def create_ocr_sentences(
     image: UploadFile,
+    member_id: Annotated[Any, Depends(get_current_member_id)],
     provider: Literal["clova", "bedrock"] | None = Query(
         default=None,
         description="OCR 엔진 선택 ('clova' 또는 'bedrock'). 미지정 시 설정된 기본값(OCR_PROVIDER) 사용",
