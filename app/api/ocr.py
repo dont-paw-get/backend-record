@@ -13,8 +13,13 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 
 from app.core.config import settings
-from app.providers.auth_provider import get_current_member_id
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from app.providers.auth_provider import get_access_token, get_current_member_id
+from app.providers.book_provider import (
+    BookProviderError,
+    InvalidIsbnError,
+    register_library_book,
+    search_book_by_isbn,
+)
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
 from app.services import bedrock_ocr
 from app.services.bedrock_ocr import (
@@ -85,15 +90,15 @@ async def create_ocr_sentences(
 @router.post("/covers", response_model=OcrCoverResponse)
 async def create_ocr_cover(
     image: UploadFile,
+    member_id: Annotated[Any, Depends(get_current_member_id)],
+    access_token: Annotated[str, Depends(get_access_token)],
     model_id: str | None = Query(
         default=None,
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",
     ),
 ) -> OcrCoverResponse:
-    """책 표지 이미지를 업로드받아 제목/저자 후보를 추출한다.
-
-    OCR 결과만으로는 제목/저자를 확정할 수 없으므로 응답은 "후보"이며,
-    실제 도서 등록/검색/저장은 이 API의 책임이 아니다.
+    """책 표지 이미지를 업로드받아 제목/저자/ISBN 후보를 추출하고, 사용자의
+    개인 서재(backend-book)에 책을 등록한다.
     """
     image_format = _validate_content_type(image.content_type)
     image_bytes = await image.read()
@@ -119,12 +124,70 @@ async def create_ocr_cover(
             detail="이미지에서 인식된 텍스트가 없습니다.",
         )
 
+    isbn = result.isbn
+    search = None
+    if isbn:
+        try:
+            search = await search_book_by_isbn(access_token, isbn)
+        except InvalidIsbnError:
+            search = None
+        except BookProviderError:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="도서 정보 조회 중 오류가 발생했습니다.",
+            )
+
+    already_registered = search is not None and search.library_book is not None
+    searched_book = search.library_book if already_registered else (
+        search.book if search is not None else None
+    )
+
+    if already_registered:
+        book_id = searched_book.get("bookId")
+    else:
+        if searched_book is not None:
+            title = searched_book.get("title") or result.title_candidate
+            author = searched_book.get("author")
+            isbn = searched_book.get("isbn") or isbn
+            publisher = searched_book.get("publisher")
+            published_date = searched_book.get("publishedDate")
+            total_pages = searched_book.get("totalPages")
+            cover_url = searched_book.get("coverUrl")
+        else:
+            # 어디에서도 도서 정보를 찾지 못한 경우 OCR 후보로 폴백 등록한다.
+            title = result.title_candidate
+            author = result.author_candidates[0] if result.author_candidates else None
+            publisher = None
+            published_date = None
+            total_pages = None
+            cover_url = None
+        try:
+            book_id = await register_library_book(
+                access_token,
+                title=title,
+                author=author,
+                isbn=isbn,
+                publisher=publisher,
+                published_date=published_date,
+                total_pages=total_pages,
+                cover_url=cover_url,
+            )
+        except BookProviderError:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="서재 책 등록 처리 중 오류가 발생했습니다.",
+            )
+
     return OcrCoverResponse(
         title_candidate=result.title_candidate,
         author_candidates=result.author_candidates,
         lines=result.lines,
         request_id=result.request_id,
         confidence=result.confidence,
+        isbn=isbn,
+        book_id=book_id,
+        already_registered=already_registered,
+        book=searched_book,
     )
 
 

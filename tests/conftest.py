@@ -27,3 +27,4 @@ os.environ.setdefault(
 os.environ.setdefault("CLOVA_OCR_SECRET_KEY", "dummy-test-secret-key")
 os.environ.setdefault("OCR_PROVIDER", "clova")
 os.environ.setdefault("AUTH_API", "http://auth.test.local")
+os.environ.setdefault("BOOK_API", "http://book.test.local")
