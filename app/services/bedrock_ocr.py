@@ -86,7 +86,10 @@ def get_bedrock_runtime_client():
         read_timeout=60,
     )
     session = boto3.Session(**session_kwargs)
-    return session.client("bedrock-runtime", region_name=settings.AWS_REGION, config=boto_config)
+    # Bedrock 은 모델이 존재하는 전용 리전(BEDROCK_REGION, 기본 us-east-1)으로
+    # 호출한다. 파드의 AWS_REGION(서울)과 분리해 두어야 서비스 홈 리전은 유지하면서
+    # Qwen3-VL 을 호출할 수 있다.
+    return session.client("bedrock-runtime", region_name=settings.BEDROCK_REGION, config=boto_config)
 
 
 def _normalize_image_format(image_format: str) -> str:

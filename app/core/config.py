@@ -35,7 +35,12 @@ class Settings(BaseSettings):
     # 사용하며 CLOVA credential이 필요하지 않습니다.
 
     # AWS Bedrock OCR 설정
+    # AWS_REGION 은 파드/서비스의 홈 리전(서울, ap-northeast-2)이며 STS 등 일반
+    # AWS 호출에 쓰인다. EKS IRSA 웹훅이 이 값을 클러스터 리전으로 주입한다.
     AWS_REGION: str = "us-east-1"
+    # BEDROCK_REGION 은 Bedrock 호출에만 사용하는 전용 리전. Qwen3-VL 모델이
+    # us-east-1 에만 있으므로 여기서 분리해 지정한다. (미지정 시 us-east-1)
+    BEDROCK_REGION: str = "us-east-1"
     AWS_PROFILE: str | None = None
     AWS_ACCESS_KEY_ID: str | None = None
     AWS_SECRET_ACCESS_KEY: str | None = None

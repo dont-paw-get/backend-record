@@ -10,4 +10,7 @@ data:
   APP_ENV: "production"
   APP_HOST: "0.0.0.0"
   APP_PORT: "8000"
+  # Bedrock 전용 호출 리전. 파드의 AWS_REGION(서울)과 분리한다.
+  # Qwen3-VL 모델이 us-east-1 에만 있어 여기서 지정한다.
+  BEDROCK_REGION: "us-east-1"
   BEDROCK_OCR_MODEL_ID: "qwen.qwen3-vl-235b-a22b"
