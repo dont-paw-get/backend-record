@@ -1,20 +1,15 @@
 from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any
-
 import httpx
 from fastapi import HTTPException, status
-
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# backend-book 서재 책 등록 엔드포인트(Base URL은 settings.BOOK_API).
 LIBRARY_BOOKS_PATH = "/api/v1/library/books"
-
-# backend-book 도서 정보 조회(ISBN 검색) 엔드포인트(Base URL은 settings.BOOK_API).
+LIBRARY_SCRAPS_PATH = "/api/v1/library/books/{book_id}/scraps"
 BOOK_SEARCH_PATH = "/api/v1/books/search"
 
 
@@ -49,10 +44,6 @@ async def register_library_book(
 ) -> Any:
     url = f"{settings.BOOK_API.rstrip('/')}{LIBRARY_BOOKS_PATH}"
     headers = {"Authorization": f"Bearer {access_token}"}
-    # backend-book 서재 책 등록 payload. 알라딘에서 조회한 도서 정보가 있으면
-    # 제목/저자뿐 아니라 isbn·publisher·publishedDate·totalPages·coverUrl까지
-    # 함께 넘겨 서재에 완전한 도서 정보를 등록한다. OCR 후보로 폴백 등록하는
-    # 경우처럼 값이 없는 필드는 None으로 채운다.
     body = {
         "title": title,
         "author": author,
@@ -76,6 +67,54 @@ async def register_library_book(
     if book_id is None:
         raise UnexpectedBookResponseError("book_id not found in book response")
     return book_id
+
+
+async def create_scrap(
+    access_token: str,
+    book_id: Any,
+    *,
+    sentence: str,
+    page_number: int | None = None,
+    scrap_image_url: str | None = None,
+    memo: str | None = None,
+) -> Any:
+    """OCR로 인식한 문장을 backend-book 서재 도서(book_id)에 스크랩으로 등록한다.
+    """
+    path = LIBRARY_SCRAPS_PATH.format(book_id=book_id)
+    url = f"{settings.BOOK_API.rstrip('/')}{path}"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    body = {
+        "sentence": sentence,
+        "pageNumber": page_number,
+        "scrapImageUrl": scrap_image_url,
+        "memo": memo,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(url, headers=headers, json=body)
+    except httpx.HTTPError as exc:
+        logger.warning("backend-book create scrap request failed: %s", exc)
+        raise BookProviderError("backend-book request failed") from exc
+
+    if response.status_code == status.HTTP_401_UNAUTHORIZED:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="유효하지 않은 access token 입니다.",
+        )
+    if response.status_code not in (status.HTTP_200_OK, status.HTTP_201_CREATED):
+        raise BookProviderError(
+            f"backend-book returned status {response.status_code}"
+        )
+
+    payload = response.json()
+    scrap_id = None
+    if isinstance(payload, dict):
+        scrap_id = payload.get("scrapId") or payload.get("id")
+
+    if scrap_id is None:
+        raise UnexpectedBookResponseError("scrap_id not found in scrap response")
+    return scrap_id
 
 
 async def search_book_by_isbn(access_token: str, isbn: str) -> BookSearchResult:

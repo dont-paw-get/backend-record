@@ -1,16 +1,10 @@
-"""POST /api/v1/ocr/sentences API 테스트.
-
-CLIAR-143: OCR Provider가 AWS Bedrock Qwen3-VL로 전환되었다. Bedrock
-호출부(app.services.bedrock_ocr.extract_text_from_image)는 monkeypatch로
-대체하여 실제 외부 호출 없이 라우터의 파일 검증/에러 매핑/응답 형태만
-검증한다.
-"""
 import importlib
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.providers.auth_provider import get_access_token, get_current_member_id
 from app.services import bedrock_ocr
 
 client = TestClient(app)
@@ -19,6 +13,36 @@ OCR_URL = "/api/v1/ocr/sentences"
 JPEG_CONTENT_TYPE = "image/jpeg"
 PNG_CONTENT_TYPE = "image/png"
 MAX_IMAGE_SIZE_BYTES = 50 * 1024 * 1024
+
+FAKE_MEMBER_ID = 7
+FAKE_ACCESS_TOKEN = "fake-access-token"
+FAKE_BOOK_ID = 42
+FAKE_SCRAP_ID = 100
+
+# sentences 요청에 항상 함께 보내는 스크랩 대상 도서 ID.
+DEFAULT_FORM = {"book_id": str(FAKE_BOOK_ID)}
+
+
+@pytest.fixture(autouse=True)
+def override_auth_dependencies():
+    """실제 backend-auth 호출 없이 인증 의존성을 통과시킨다."""
+    app.dependency_overrides[get_current_member_id] = lambda: FAKE_MEMBER_ID
+    app.dependency_overrides[get_access_token] = lambda: FAKE_ACCESS_TOKEN
+    yield
+    app.dependency_overrides.pop(get_current_member_id, None)
+    app.dependency_overrides.pop(get_access_token, None)
+
+
+@pytest.fixture(autouse=True)
+def stub_create_scrap(monkeypatch):
+    """기본적으로 backend-book 스크랩 생성을 성공(scrap_id 반환)으로 대체한다.
+
+    개별 테스트에서 실패 케이스를 검증할 때는 다시 monkeypatch한다.
+    """
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        return FAKE_SCRAP_ID
+
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
 
 
 def _fake_bedrock_result():
@@ -39,7 +63,9 @@ def test_ocr_sentences_accepts_jpeg_and_returns_text_and_lines(monkeypatch):
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 200
@@ -49,6 +75,8 @@ def test_ocr_sentences_accepts_jpeg_and_returns_text_and_lines(monkeypatch):
     assert body["request_id"] == "22222222-2222-2222-2222-222222222222"
     assert body["confidence"] == 0.97
     assert body["provider"] == "bedrock"
+    assert body["book_id"] == FAKE_BOOK_ID
+    assert body["scrap_id"] == FAKE_SCRAP_ID
 
 
 def test_ocr_sentences_accepts_png(monkeypatch):
@@ -59,7 +87,9 @@ def test_ocr_sentences_accepts_png(monkeypatch):
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.png", b"fake-bytes", PNG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.png", b"fake-bytes", PNG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 200
@@ -75,15 +105,89 @@ def test_ocr_sentences_with_custom_model_id(monkeypatch):
     response = client.post(
         f"{OCR_URL}?model_id=custom.qwen3-vl",
         files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 200
     assert response.json()["provider"] == "bedrock"
 
 
+def test_ocr_sentences_creates_scrap_with_ocr_text_and_optional_fields(monkeypatch):
+    """OCR 텍스트를 sentence로, book_id/page_number/memo/scrap_image_url을
+    그대로 backend-book 스크랩 생성에 전달하는지 검증한다."""
+    captured = {}
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        captured["access_token"] = access_token
+        captured["book_id"] = book_id
+        captured.update(kwargs)
+        return FAKE_SCRAP_ID
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
+
+    response = client.post(
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data={
+            "book_id": str(FAKE_BOOK_ID),
+            "page_number": "12",
+            "memo": "인상 깊은 문장",
+            "scrap_image_url": "https://cdn.test.local/scrap/1.jpg",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["access_token"] == FAKE_ACCESS_TOKEN
+    assert captured["book_id"] == FAKE_BOOK_ID
+    assert captured["sentence"] == "첫 번째 줄\n두 번째 줄"
+    assert captured["page_number"] == 12
+    assert captured["memo"] == "인상 깊은 문장"
+    assert captured["scrap_image_url"] == "https://cdn.test.local/scrap/1.jpg"
+
+
+def test_ocr_sentences_requires_book_id(monkeypatch):
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+
+    response = client.post(
+        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+    )
+
+    assert response.status_code == 422
+
+
+def test_ocr_sentences_maps_scrap_provider_error_to_502(monkeypatch):
+    from app.providers.book_provider import BookProviderError
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        raise BookProviderError("boom")
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
+
+    response = client.post(
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 502
+
+
 def test_ocr_sentences_rejects_empty_file():
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 400
@@ -91,7 +195,9 @@ def test_ocr_sentences_rejects_empty_file():
 
 def test_ocr_sentences_rejects_unsupported_content_type():
     response = client.post(
-        OCR_URL, files={"image": ("sentence.gif", b"fake-bytes", "image/gif")}
+        OCR_URL,
+        files={"image": ("sentence.gif", b"fake-bytes", "image/gif")},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 415
@@ -101,7 +207,9 @@ def test_ocr_sentences_rejects_oversized_file():
     oversized = b"0" * (MAX_IMAGE_SIZE_BYTES + 1)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", oversized, JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", oversized, JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 413
@@ -114,7 +222,9 @@ def test_ocr_sentences_maps_timeout_error_to_504(monkeypatch):
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 504
@@ -127,7 +237,9 @@ def test_ocr_sentences_maps_request_failed_error_to_502(monkeypatch):
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 502
@@ -140,7 +252,9 @@ def test_ocr_sentences_maps_empty_result_error_to_422(monkeypatch):
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert response.status_code == 422
@@ -155,7 +269,9 @@ def test_ocr_sentences_error_response_does_not_leak_upstream_message(monkeypatch
     monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
 
     response = client.post(
-        OCR_URL, files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)}
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
     )
 
     assert secret_like_message not in response.text

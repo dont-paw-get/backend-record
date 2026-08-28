@@ -1,16 +1,7 @@
-"""OCR API 요청/응답 스키마."""
 from typing import Any
-
 from pydantic import BaseModel, Field
 
-
 class OcrSentencesResponse(BaseModel):
-    """POST /api/v1/ocr/sentences 응답 스키마.
-
-    CLOVA OCR의 raw 응답을 그대로 노출하지 않고, Frontend가 사용하기
-    쉬운 최소한의 형태로 가공한 결과만 포함한다.
-    """
-
     text: str = Field(description="줄바꿈으로 재구성된 전체 OCR 텍스트")
     lines: list[str] = Field(description="줄 단위 텍스트 목록")
     request_id: str = Field(description="내부 추적용 OCR 요청 ID")
@@ -21,17 +12,18 @@ class OcrSentencesResponse(BaseModel):
         default=None, description="인식된 주요 언어 ('ko', 'en', 'ja', 'zh', 'mixed')"
     )
     provider: str = Field(default="bedrock", description="사용한 OCR 공급자")
+    book_id: Any = Field(
+        description="스크랩을 등록한 backend-book 서재 도서의 ID (요청으로 받은 book_id)"
+    )
+    scrap_id: Any = Field(
+        description=(
+            "backend-book에 생성된 스크랩의 ID "
+            "(POST /api/v1/library/books/{bookId}/scraps 결과)"
+        )
+    )
 
 
 class OcrCoverResponse(BaseModel):
-    """POST /api/v1/ocr/covers 응답 스키마.
-
-    책 표지 OCR만으로는 제목/저자를 100% 확정할 수 없으므로, 확정값이
-    아닌 "후보"로 응답한다. 추출 근거(글자 크기, 저자 표기 키워드 등)가
-    부족하면 title_candidate는 None, author_candidates는 빈 배열이 될 수
-    있다. 최종 확정은 Frontend에서 사용자 확인을 거쳐야 한다.
-    """
-
     title_candidate: str | None = Field(
         default=None, description="표지에서 가장 큰 글씨로 인식된 줄 (제목 후보)"
     )
