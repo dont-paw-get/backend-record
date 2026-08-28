@@ -42,5 +42,7 @@ class Settings(BaseSettings):
     AWS_SESSION_TOKEN: str | None = None
     BEDROCK_OCR_MODEL_ID: str = "qwen.qwen3-vl-235b-a22b"
 
+    AUTH_API: str
+
 
 settings = Settings()

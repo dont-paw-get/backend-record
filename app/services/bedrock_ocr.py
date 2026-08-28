@@ -74,6 +74,7 @@ def get_bedrock_runtime_client():
         if settings.AWS_SESSION_TOKEN:
             session_kwargs["aws_session_token"] = settings.AWS_SESSION_TOKEN
 
+
     boto_config = Config(
         retries={
             "max_attempts": 6,
@@ -94,6 +95,44 @@ def _normalize_image_format(image_format: str) -> str:
     if fmt in ("png", "webp", "gif"):
         return fmt
     return "jpeg"
+
+
+# 모델에 보내기 전에 이미지의 긴 변을 이 값 이하로 축소한다. 폰 카메라 원본
+# (4000px대)을 그대로 보내면 vision 토큰이 폭증해 prefill 지연이 커진다.
+# 2048px는 책 문장/표지 텍스트 가독성을 유지하면서도 큰 이미지의 처리량을
+# 크게 줄이는 절충값이다. 이보다 작은 이미지는 그대로 사용한다.
+_MAX_IMAGE_DIMENSION = 2048
+
+
+def _downscale_image_if_needed(image_bytes: bytes, normalized_format: str) -> bytes:
+    """긴 변이 _MAX_IMAGE_DIMENSION을 넘는 이미지는 비율을 유지하며 축소한다.
+
+    축소가 불필요하거나 디코딩에 실패하면 원본 바이트를 그대로 반환한다.
+    (여기서 예외를 던져 OCR을 막지 않는다. 잘못된 이미지 판정은 모델에 맡긴다.)
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    try:
+        with Image.open(BytesIO(image_bytes)) as img:
+            longest = max(img.size)
+            if longest <= _MAX_IMAGE_DIMENSION:
+                return image_bytes
+
+            img = img.copy()
+            img.thumbnail((_MAX_IMAGE_DIMENSION, _MAX_IMAGE_DIMENSION))
+
+            pil_format = "JPEG" if normalized_format == "jpeg" else normalized_format.upper()
+            if pil_format == "JPEG" and img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+
+            buffer = BytesIO()
+            img.save(buffer, format=pil_format)
+            return buffer.getvalue()
+    except Exception:  # noqa: BLE001 - 축소 실패 시 원본 유지 (OCR 자체는 진행)
+        logger.warning("이미지 축소에 실패하여 원본 이미지를 사용합니다.", exc_info=True)
+        return image_bytes
 
 
 def _detect_language(text: str) -> str:
@@ -242,6 +281,8 @@ def _invoke_converse(
         BedrockOcrEmptyResultError: content가 비어 있는 경우.
     """
     normalized_format = _normalize_image_format(image_format)
+    # 큰 원본 이미지는 prefill 지연을 줄이기 위해 전송 전에 축소한다.
+    image_bytes = _downscale_image_if_needed(image_bytes, normalized_format)
 
     messages = [
         {
@@ -255,7 +296,20 @@ def _invoke_converse(
                         },
                     }
                 },
-                {"text": prompt_text},
+                {
+                    "text": (
+                        "이미지에 적힌 모든 텍스트를 보이는 원문 그대로 추출하고, "
+                        "인식된 텍스트의 선명도와 정확도를 바탕으로 신뢰도(0.00 ~ 1.00)를 측정하여 반드시 아래 JSON 형식으로만 응답해줘.\n"
+                        "- 대상 언어: 한국어(ko), 영어(en), 일본어(ja), 중국어(zh)\n"
+                        "- 한글, 영문 대소문자, 일본어(가나/한자), 중국어(간체/번체) 원문 표기를 그대로 유지\n"
+                        "- 각 줄을 lines 배열에 순서대로 담고, 설명·번역·사족 없이 아래 JSON 형식으로만 출력:\n"
+                        "{\n"
+                        '  "lines": ["줄1", "줄2"],\n'
+                        '  "language": "ko" | "en" | "ja" | "zh" | "mixed",\n'
+                        '  "confidence": 0.98\n'
+                        "}"
+                    )
+                },
             ],
         }
     ]

@@ -8,8 +8,13 @@ Bedrock 관련 세부 구현은 app.services.bedrock_ocr 안에 격리되어 있
 CLIAR-143: OCR Provider를 AWS Bedrock Qwen3-VL로 완전히 전환했다. 이
 모듈은 더 이상 NAVER CLOVA OCR을 호출하지 않는다.
 """
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from typing import Annotated, Any, Literal
 
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+
+from app.core.config import settings
+from app.providers.auth_provider import get_current_member_id
+from fastapi import APIRouter, HTTPException, Query, UploadFile, status
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
 from app.services import bedrock_ocr
 from app.services.bedrock_ocr import (
@@ -32,6 +37,11 @@ SUPPORTED_CONTENT_TYPES: dict[str, str] = {
 @router.post("/sentences", response_model=OcrSentencesResponse)
 async def create_ocr_sentences(
     image: UploadFile,
+    member_id: Annotated[Any, Depends(get_current_member_id)],
+    provider: Literal["clova", "bedrock"] | None = Query(
+        default=None,
+        description="OCR 엔진 선택 ('clova' 또는 'bedrock'). 미지정 시 설정된 기본값(OCR_PROVIDER) 사용",
+    ),
     model_id: str | None = Query(
         default=None,
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",

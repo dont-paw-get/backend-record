@@ -20,3 +20,10 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+psycopg://test_user:test_password@localhost:5433/test_db",
 )
+os.environ.setdefault(
+    "CLOVA_OCR_INVOKE_URL",
+    "https://example.apigw.ntruss.com/custom/v1/00000/xxxxxxxx/general",
+)
+os.environ.setdefault("CLOVA_OCR_SECRET_KEY", "dummy-test-secret-key")
+os.environ.setdefault("OCR_PROVIDER", "clova")
+os.environ.setdefault("AUTH_API", "http://auth.test.local")
