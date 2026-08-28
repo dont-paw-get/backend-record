@@ -45,6 +45,24 @@ class BedrockOcrResult:
     language: str | None = None
 
 
+@dataclass(frozen=True)
+class BedrockOcrCoverResult:
+    """책 표지 OCR 결과.
+
+    Bedrock Qwen3-VL은 이미지를 시각적으로 이해하므로, 여러 줄에 걸쳐
+    배치된 하나의 제목도 모델이 직접 하나의 title_candidate로 결합해
+    반환한다(bounding box 좌표 기반 heuristic을 사용하지 않는다). OCR만
+    으로 제목/저자를 100% 확정할 수 없으므로 확정값이 아닌 "후보"이며,
+    모델이 확신하지 못하면 None/빈 목록으로 그대로 유지한다.
+    """
+
+    title_candidate: str | None
+    author_candidates: list[str]
+    lines: list[str]
+    request_id: str
+    confidence: float | None = None
+
+
 def get_bedrock_runtime_client():
     """설정된 환경변수 또는 프로필에 맞춰 boto3 Bedrock-Runtime 클라이언트를 생성한다."""
     session_kwargs = {}
@@ -162,10 +180,67 @@ def _parse_extracted_content(raw_text: str) -> tuple[str, list[str], float | Non
     return text, lines, confidence, language
 
 
-def _sync_invoke_converse(
-    client, image_bytes: bytes, image_format: str, model_id: str, request_id: str
-) -> BedrockOcrResult:
-    """동기적으로 Bedrock Converse API를 호출한다."""
+SENTENCE_OCR_PROMPT = (
+    "이미지에 적힌 모든 텍스트를 보이는 원문 그대로 추출하고, "
+    "인식된 텍스트의 선명도와 정확도를 바탕으로 신뢰도(0.00 ~ 1.00)를 측정하여 반드시 아래 JSON 형식으로만 응답해줘.\n"
+    "- 대상 언어: 한국어(ko), 영어(en), 일본어(ja), 중국어(zh)\n"
+    "- 한글, 영문 대소문자, 일본어(가나/한자), 중국어(간체/번체) 원문 표기를 그대로 유지\n"
+    "- 설명, 번역, 사족 없이 반드시 아래 JSON 형식으로만 출력:\n"
+    "{\n"
+    '  "text": "줄바꿈(\\n)으로 연결된 전체 원문 텍스트",\n'
+    '  "lines": ["줄1", "줄2"],\n'
+    '  "language": "ko" | "en" | "ja" | "zh" | "mixed",\n'
+    '  "confidence": 0.98\n'
+    "}"
+)
+
+# 책 표지 전용 prompt. CLOVA 기반 구현(CLIAR-131/136/142)은 bounding box
+# 좌표로 글자 크기를 비교해 제목을 추정했지만, 그 방식은 제목이 여러 줄에
+# 걸쳐 배치된 경우(CLIAR-142에서 발견) 하나로 결합하지 못하는 한계가 있었다.
+# Qwen3-VL은 이미지를 시각적으로 이해하므로, 여러 줄에 걸친 제목을 모델이
+# 직접 하나의 title_candidate로 결합해 반환하도록 요청한다. 모델이 이미지에
+# 없는 정보를 추측하거나 외부 지식(ISBN 검색, 저자 추측 등)으로 보완하지
+# 않도록 명시적으로 금지한다.
+COVER_OCR_PROMPT = (
+    "이 이미지는 책 표지다. 이미지에서 실제로 보이는 텍스트만 사용해서 "
+    "아래 JSON 형식으로만 응답해줘.\n"
+    "- title_candidate: 표지에 인쇄된 책 제목. 제목이 여러 줄로 나뉘어 있으면 "
+    "하나의 문자열로 합쳐라. 부제(sub title)는 제목에 포함하지 마라. 제목을 "
+    "확신할 수 없으면 null로 응답해라.\n"
+    "- author_candidates: 저자/역자/편저자 표기(예: '지음', '옮김', '저', '편저' 등)가 "
+    "함께 적힌 텍스트 목록. 확신할 수 없으면 빈 배열로 응답해라.\n"
+    "- lines: 표지에서 인식한 전체 텍스트를 줄 단위로 나눈 목록.\n\n"
+    "중요:\n"
+    "- 이미지에 실제로 보이지 않는 텍스트를 만들어내지 마라.\n"
+    "- ISBN 검색, 인터넷 검색, 외부 지식으로 저자나 제목을 추측/보완하지 마라.\n"
+    "- 제목이나 저자를 창작하거나 교정하지 마라.\n"
+    "- 설명, 번역, 사족 없이 반드시 아래 JSON 형식으로만 출력:\n"
+    "{\n"
+    '  "title_candidate": "책 제목" | null,\n'
+    '  "author_candidates": ["저자 지음"],\n'
+    '  "lines": ["줄1", "줄2"]\n'
+    "}"
+)
+
+
+def _invoke_converse(
+    client,
+    image_bytes: bytes,
+    image_format: str,
+    model_id: str,
+    request_id: str,
+    prompt_text: str,
+) -> tuple[str, str]:
+    """Bedrock Converse API를 호출하고 (모델 응답 원문, 실제 request_id)를 반환한다.
+
+    sentence OCR과 cover OCR이 공통으로 사용하는 HTTP 호출/오류 처리
+    로직이다. 이후 응답 파싱(JSON 구조 해석)만 호출부마다 다르다.
+
+    Raises:
+        BedrockOcrTimeoutError: 호출이 timeout된 경우.
+        BedrockOcrRequestFailedError: 호출 실패, 응답 구조 이상.
+        BedrockOcrEmptyResultError: content가 비어 있는 경우.
+    """
     normalized_format = _normalize_image_format(image_format)
 
     messages = [
@@ -180,21 +255,7 @@ def _sync_invoke_converse(
                         },
                     }
                 },
-                {
-                    "text": (
-                        "이미지에 적힌 모든 텍스트를 보이는 원문 그대로 추출하고, "
-                        "인식된 텍스트의 선명도와 정확도를 바탕으로 신뢰도(0.00 ~ 1.00)를 측정하여 반드시 아래 JSON 형식으로만 응답해줘.\n"
-                        "- 대상 언어: 한국어(ko), 영어(en), 일본어(ja), 중국어(zh)\n"
-                        "- 한글, 영문 대소문자, 일본어(가나/한자), 중국어(간체/번체) 원문 표기를 그대로 유지\n"
-                        "- 설명, 번역, 사족 없이 반드시 아래 JSON 형식으로만 출력:\n"
-                        "{\n"
-                        '  "text": "줄바꿈(\\n)으로 연결된 전체 원문 텍스트",\n'
-                        '  "lines": ["줄1", "줄2"],\n'
-                        '  "language": "ko" | "en" | "ja" | "zh" | "mixed",\n'
-                        '  "confidence": 0.98\n'
-                        "}"
-                    )
-                },
+                {"text": prompt_text},
             ],
         }
     ]
@@ -246,12 +307,22 @@ def _sync_invoke_converse(
         logger.warning("Failed to parse Bedrock response structure (requestId=%s)", request_id)
         raise BedrockOcrRequestFailedError("Failed to parse Bedrock response") from exc
 
+    req_id = response.get("ResponseMetadata", {}).get("RequestId") or request_id
+    return raw_text, req_id
+
+
+def _sync_invoke_converse(
+    client, image_bytes: bytes, image_format: str, model_id: str, request_id: str
+) -> BedrockOcrResult:
+    """동기적으로 Bedrock Converse API를 호출해 문장 OCR 결과를 얻는다."""
+    raw_text, req_id = _invoke_converse(
+        client, image_bytes, image_format, model_id, request_id, SENTENCE_OCR_PROMPT
+    )
+
     text, lines, confidence, language = _parse_extracted_content(raw_text)
     if not text.strip():
-        logger.warning("Bedrock OCR returned empty text (requestId=%s)", request_id)
+        logger.warning("Bedrock OCR returned empty text (requestId=%s)", req_id)
         raise BedrockOcrEmptyResultError("Bedrock OCR returned empty text")
-
-    req_id = response.get("ResponseMetadata", {}).get("RequestId") or request_id
 
     logger.info(
         "Bedrock OCR parsed successfully: lines=%d, lang=%s, confidence=%s (requestId=%s)",
@@ -267,6 +338,93 @@ def _sync_invoke_converse(
         request_id=req_id,
         confidence=confidence,
         language=language,
+    )
+
+
+def _parse_cover_content(raw_text: str) -> tuple[str | None, list[str], list[str]]:
+    """책 표지 OCR 모델 응답에서 title/author/lines를 추출한다.
+
+    모델이 markdown code fence로 감싸거나 JSON 파싱에 실패할 가능성을
+    고려하되, 파싱에 실패했을 때 title/author를 억지로 만들어내지 않는다
+    (원문을 lines로만 보존하고 title_candidate=None, author_candidates=[]).
+
+    CLIAR-143 최종 수정: 모델이 응답에 confidence 필드를 포함하더라도
+    이를 읽거나 반환하지 않는다. AWS Bedrock Qwen3-VL은 CLOVA
+    inferConfidence와 동일한 의미의 공식 OCR confidence를 제공하지
+    않으므로, 모델이 생성한 confidence 숫자를 신뢰도 값으로 사용하지
+    않는다 (호출부에서 항상 None으로 반환).
+    """
+    import json
+
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        first_newline = cleaned.find("\n")
+        cleaned = cleaned[first_newline + 1 :] if first_newline != -1 else ""
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        data = None
+
+    if isinstance(data, dict):
+        title_candidate = data.get("title_candidate")
+        title_candidate = str(title_candidate).strip() if title_candidate else None
+
+        author_candidates = data.get("author_candidates")
+        if isinstance(author_candidates, list):
+            author_candidates = [str(a).strip() for a in author_candidates if str(a).strip()]
+        else:
+            author_candidates = []
+
+        lines = data.get("lines")
+        if isinstance(lines, list):
+            lines = [str(line).strip() for line in lines if str(line).strip()]
+        else:
+            lines = []
+
+        return title_candidate, author_candidates, lines
+
+    # JSON 구조가 아니면 title/author를 추측하지 않고, 원문만 줄 단위로 보존한다.
+    lines = [line.strip() for line in cleaned.splitlines() if line.strip()]
+    return None, [], lines
+
+
+def _sync_invoke_cover_converse(
+    client, image_bytes: bytes, image_format: str, model_id: str, request_id: str
+) -> BedrockOcrCoverResult:
+    """동기적으로 Bedrock Converse API를 호출해 책 표지 OCR 결과를 얻는다."""
+    raw_text, req_id = _invoke_converse(
+        client, image_bytes, image_format, model_id, request_id, COVER_OCR_PROMPT
+    )
+
+    title_candidate, author_candidates, lines = _parse_cover_content(raw_text)
+
+    if not title_candidate and not author_candidates and not lines:
+        logger.warning("Bedrock cover OCR returned empty result (requestId=%s)", req_id)
+        raise BedrockOcrEmptyResultError("Bedrock cover OCR returned empty result")
+
+    logger.info(
+        "Bedrock cover OCR parsed successfully: has_title=%s, "
+        "author_candidate_count=%d, lines=%d (requestId=%s)",
+        title_candidate is not None,
+        len(author_candidates),
+        len(lines),
+        req_id,
+    )
+
+    # CLIAR-143 최종 수정: AWS Bedrock Qwen3-VL이 생성한 confidence 값은
+    # CLOVA inferConfidence와 동일한 의미의 공식 OCR confidence가 아니므로
+    # 신뢰도 값으로 사용하지 않는다. API contract는 유지하되 항상 None을
+    # 반환한다.
+    return BedrockOcrCoverResult(
+        title_candidate=title_candidate,
+        author_candidates=author_candidates,
+        lines=lines,
+        request_id=req_id,
+        confidence=None,
     )
 
 
@@ -295,6 +453,44 @@ async def extract_text_from_image(
 
     return await asyncio.to_thread(
         _sync_invoke_converse,
+        bedrock_client,
+        image_bytes,
+        image_format,
+        target_model_id,
+        request_id,
+    )
+
+
+async def extract_book_cover_candidates(
+    image_bytes: bytes,
+    image_format: str,
+    model_id: str | None = None,
+    client=None,
+) -> BedrockOcrCoverResult:
+    """책 표지 이미지를 AWS Bedrock (Qwen3-VL 등)에 전달해 제목/저자 후보를 추출한다.
+
+    sentence OCR(extract_text_from_image)과 동일한 Bedrock 호출 로직
+    (_invoke_converse)을 재사용하며, 책 표지 전용 prompt와 응답 파싱만
+    다르다. OCR만으로 제목/저자를 확정할 수 없으므로 결과는 "후보"이며,
+    모델이 확신하지 못하면 None/빈 목록을 그대로 반환한다.
+
+    Args:
+        image_bytes: 업로드된 이미지 바이트.
+        image_format: 이미지 형식 ("jpg", "png", "jpeg" 등).
+        model_id: 사용할 Bedrock 모델 ID (미지정 시 설정값 BEDROCK_OCR_MODEL_ID 사용).
+        client: 테스트나 사용자 정의 boto3 클라이언트 주입용.
+
+    Raises:
+        BedrockOcrTimeoutError: API 호출 시간 초과 시.
+        BedrockOcrRequestFailedError: API 호출 실패 또는 비정상 응답 시.
+        BedrockOcrEmptyResultError: title/author/lines가 모두 비어 있는 경우.
+    """
+    target_model_id = model_id or settings.BEDROCK_OCR_MODEL_ID
+    request_id = str(uuid.uuid4())
+    bedrock_client = client or get_bedrock_runtime_client()
+
+    return await asyncio.to_thread(
+        _sync_invoke_cover_converse,
         bedrock_client,
         image_bytes,
         image_format,
