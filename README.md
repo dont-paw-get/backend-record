@@ -167,9 +167,13 @@ Content-Type: multipart/form-data
   "author_candidates": ["이수진 지음"],
   "lines": ["성공하는 인생의 비밀", "성공하는 사람들의 비밀을 풀어라!", "이수진 지음"],
   "request_id": "…",
-  "confidence": 0.95
+  "confidence": null
 }
 ```
+
+AWS Bedrock Qwen3-VL은 CLOVA `inferConfidence`와 동일한 의미의 공식 OCR
+confidence를 제공하지 않으므로, `/covers` 응답의 `confidence`는 항상
+`null`로 반환됩니다.
 
 ### 환경변수 설정
 
