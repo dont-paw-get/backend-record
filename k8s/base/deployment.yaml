@@ -15,6 +15,9 @@ spec:
       labels:
         app.kubernetes.io/name: backend-record
     spec:
+      # IRSA: 위 ServiceAccount(backend-record)에 연결된 IAM Role 로
+      # AWS Bedrock 을 호출한다. Secret 의 정적 AWS 키는 더 이상 불필요.
+      serviceAccountName: backend-record
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
