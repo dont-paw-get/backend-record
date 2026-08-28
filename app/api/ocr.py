@@ -1,22 +1,16 @@
-"""문장/책 표지 이미지 OCR API.
-
-Frontend에서 Crop/회전까지 완료된 최종 책 문장/표지 이미지를 업로드받아
-AWS Bedrock Qwen3-VL로 텍스트를 추출한 뒤, 사용하기 쉬운 형태로 반환한다.
-Bedrock 관련 세부 구현은 app.services.bedrock_ocr 안에 격리되어 있으며
-이 라우터는 파일 검증과 에러 매핑만 담당한다.
-
-CLIAR-143: OCR Provider를 AWS Bedrock Qwen3-VL로 완전히 전환했다. 이
-모듈은 더 이상 NAVER CLOVA OCR을 호출하지 않는다.
+"""
+문장/책 표지 이미지 OCR API
 """
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
 
 from app.core.config import settings
 from app.providers.auth_provider import get_access_token, get_current_member_id
 from app.providers.book_provider import (
     BookProviderError,
     InvalidIsbnError,
+    create_scrap,
     register_library_book,
     search_book_by_isbn,
 )
@@ -43,6 +37,23 @@ SUPPORTED_CONTENT_TYPES: dict[str, str] = {
 async def create_ocr_sentences(
     image: UploadFile,
     member_id: Annotated[Any, Depends(get_current_member_id)],
+    access_token: Annotated[str, Depends(get_access_token)],
+    book_id: Annotated[
+        int,
+        Form(description="스크랩을 연결할 backend-book 서재 도서의 ID"),
+    ],
+    page_number: Annotated[
+        int | None,
+        Form(description="스크랩한 문장이 위치한 페이지 번호 (선택)"),
+    ] = None,
+    memo: Annotated[
+        str | None,
+        Form(description="스크랩에 남길 사용자 메모 (선택)"),
+    ] = None,
+    scrap_image_url: Annotated[
+        str | None,
+        Form(description="스크랩 원본 이미지 URL (선택). 프론트가 업로드한 경우 전달"),
+    ] = None,
     provider: Literal["clova", "bedrock"] | None = Query(
         default=None,
         description="OCR 엔진 선택 ('clova' 또는 'bedrock'). 미지정 시 설정된 기본값(OCR_PROVIDER) 사용",
@@ -52,7 +63,10 @@ async def create_ocr_sentences(
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",
     ),
 ) -> OcrSentencesResponse:
-    """책 문장 이미지를 업로드받아 OCR 텍스트를 추출한다."""
+    """
+    책 문장 이미지를 업로드받아 OCR 텍스트를 추출하고, 인식한 문장을
+    backend-book 서재 도서(book_id)의 스크랩으로 등록한다.
+    """
     image_format = _validate_content_type(image.content_type)
     image_bytes = await image.read()
     _validate_image_bytes(image_bytes)
@@ -77,6 +91,21 @@ async def create_ocr_sentences(
             detail="이미지에서 인식된 텍스트가 없습니다.",
         )
 
+    try:
+        scrap_id = await create_scrap(
+            access_token,
+            book_id,
+            sentence=result.text,
+            page_number=page_number,
+            scrap_image_url=scrap_image_url,
+            memo=memo,
+        )
+    except BookProviderError:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
+        )
+
     return OcrSentencesResponse(
         text=result.text,
         lines=result.lines,
@@ -84,6 +113,8 @@ async def create_ocr_sentences(
         confidence=result.confidence,
         language=result.language,
         provider="bedrock",
+        book_id=book_id,
+        scrap_id=scrap_id,
     )
 
 
@@ -97,7 +128,8 @@ async def create_ocr_cover(
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",
     ),
 ) -> OcrCoverResponse:
-    """책 표지 이미지를 업로드받아 제목/저자/ISBN 후보를 추출하고, 사용자의
+    """
+    책 표지 이미지를 업로드받아 제목/저자/ISBN 후보를 추출하고, 사용자의
     개인 서재(backend-book)에 책을 등록한다.
     """
     image_format = _validate_content_type(image.content_type)
