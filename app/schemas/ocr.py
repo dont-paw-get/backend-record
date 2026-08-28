@@ -18,7 +18,7 @@ class OcrSentencesResponse(BaseModel):
     language: str | None = Field(
         default=None, description="인식된 주요 언어 ('ko', 'en', 'ja', 'zh', 'mixed')"
     )
-    provider: str = Field(default="clova", description="사용한 OCR 공급자 ('clova' 또는 'bedrock')")
+    provider: str = Field(default="bedrock", description="사용한 OCR 공급자")
 
 
 class OcrCoverResponse(BaseModel):
@@ -37,8 +37,12 @@ class OcrCoverResponse(BaseModel):
         default_factory=list,
         description="'지음/글/옮김' 등 저자 표기 키워드가 포함된 줄 목록 (저자 후보)",
     )
-    lines: list[str] = Field(description="lineBreak 기준으로 재구성된 줄 단위 텍스트 목록")
-    request_id: str = Field(description="내부 추적용 CLOVA OCR 요청 ID")
+    lines: list[str] = Field(description="인식된 줄 단위 텍스트 목록")
+    request_id: str = Field(description="내부 추적용 OCR 요청 ID")
     confidence: float | None = Field(
-        default=None, description="필드별 인식 신뢰도의 평균값 (0~1)"
+        default=None,
+        description=(
+            "인식 신뢰도. AWS Bedrock Qwen3-VL은 공식 OCR confidence를 "
+            "제공하지 않으므로 항상 None을 반환한다."
+        ),
     )

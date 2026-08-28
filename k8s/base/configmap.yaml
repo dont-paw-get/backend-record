@@ -5,8 +5,9 @@ metadata:
   labels:
     app.kubernetes.io/name: backend-record
 # 민감하지 않은 설정값만 여기에 둡니다.
-# DB 접속정보, CLOVA OCR Invoke URL/Secret Key 등 비밀값은 Secret 에 둡니다.
+# DB 접속정보, AWS 자격증명 등 비밀값은 Secret 에 둡니다.
 data:
   APP_ENV: "production"
   APP_HOST: "0.0.0.0"
   APP_PORT: "8000"
+  BEDROCK_OCR_MODEL_ID: "qwen.qwen3-vl-235b-a22b"

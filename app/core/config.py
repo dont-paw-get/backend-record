@@ -29,14 +29,10 @@ class Settings(BaseSettings):
     # 목적으로 코드 자체는 유지하되, 이 값이 없으면 사용하지 않습니다.
     DATABASE_URL: str | None = None
 
-    # NAVER Cloud CLOVA OCR General API 연결 정보. 기본값을 두지 않고
-    # 필수 환경변수로 요구합니다. 실제 URL/Secret 값은 코드에 작성하지
-    # 않으며, .env 파일(로컬) 또는 배포 환경의 환경변수로 주입합니다.
-    CLOVA_OCR_INVOKE_URL: str
-    CLOVA_OCR_SECRET_KEY: str
-
-    # 기본 OCR 공급자 ("clova" 또는 "bedrock")
-    OCR_PROVIDER: str = "clova"
+    # CLIAR-143: OCR Provider를 AWS Bedrock Qwen3-VL로 완전히 전환하여
+    # NAVER CLOVA OCR 관련 설정(CLOVA_OCR_INVOKE_URL, CLOVA_OCR_SECRET_KEY,
+    # OCR_PROVIDER)을 제거했습니다. backend-record는 이제 AWS Bedrock만
+    # 사용하며 CLOVA credential이 필요하지 않습니다.
 
     # AWS Bedrock OCR 설정
     AWS_REGION: str = "us-east-1"
