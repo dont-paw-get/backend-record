@@ -32,6 +32,16 @@ spec:
           ports:
             - name: http
               containerPort: 8000
+          # AWS_REGION 을 명시적으로 고정한다. EKS IRSA(pod-identity) 웹훅이
+          # 파드에 클러스터 리전(ap-northeast-2)을 AWS_REGION 으로 주입하는데,
+          # Bedrock Qwen3-VL 모델은 us-east-1 에만 있어 그대로 두면 Converse 가
+          # "invalid model identifier" 로 실패한다. 명시적 env 는 webhook 주입과
+          # envFrom(configmap)보다 우선하므로 여기서 강제한다.
+          env:
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: AWS_DEFAULT_REGION
+              value: "us-east-1"
           envFrom:
             - configMapRef:
                 name: backend-record-config
