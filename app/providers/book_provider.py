@@ -53,6 +53,7 @@ async def register_library_book(
         "totalPages": total_pages,
         "coverUrl": cover_url,
     }
+    print(body)
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -100,9 +101,16 @@ async def create_scrap(
     if response.status_code == status.HTTP_401_UNAUTHORIZED:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 access token 입니다.",
+            detail="[backend-book/scrap] 유효하지 않은 access token 입니다.",
         )
     if response.status_code not in (status.HTTP_200_OK, status.HTTP_201_CREATED):
+        logger.warning(
+            "backend-book create scrap failed (url=%s, book_id=%s, status=%s, body=%s)",
+            url,
+            book_id,
+            response.status_code,
+            response.text,
+        )
         raise BookProviderError(
             f"backend-book returned status {response.status_code}"
         )
@@ -122,7 +130,7 @@ async def search_book_by_isbn(access_token: str, isbn: str) -> BookSearchResult:
     url = f"{settings.BOOK_API.rstrip('/')}{BOOK_SEARCH_PATH}"
     headers = {"Authorization": f"Bearer {access_token}"}
     params = {"isbn": isbn}
-
+   
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(url, headers=headers, params=params)
@@ -134,7 +142,7 @@ async def search_book_by_isbn(access_token: str, isbn: str) -> BookSearchResult:
     if response.status_code == status.HTTP_401_UNAUTHORIZED:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 access token 입니다.",
+            detail="[backend-book/isbn] 유효하지 않은 access token 입니다.",
         )
     if response.status_code != status.HTTP_200_OK:
         raise BookProviderError(

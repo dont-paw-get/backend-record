@@ -1,6 +1,7 @@
 """
 문장/책 표지 이미지 OCR API
 """
+import logging
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile, status
@@ -21,6 +22,8 @@ from app.services.bedrock_ocr import (
     BedrockOcrRequestFailedError,
     BedrockOcrTimeoutError,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/ocr", tags=["ocr"])
 
@@ -100,7 +103,8 @@ async def create_ocr_sentences(
             scrap_image_url=scrap_image_url,
             memo=memo,
         )
-    except BookProviderError:
+    except BookProviderError as exc:
+        logger.warning("create_scrap failed (book_id=%s): %s", book_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
