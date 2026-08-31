@@ -38,7 +38,7 @@ async def fetch_member_id(access_token: str) -> Any:
     if response.status_code == status.HTTP_401_UNAUTHORIZED:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="유효하지 않은 access token 입니다.",
+            detail="[backend-auth] 유효하지 않은 access token 입니다.",
         )
     if response.status_code != status.HTTP_200_OK:
         logger.warning(
