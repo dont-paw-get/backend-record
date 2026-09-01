@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     AWS_SESSION_TOKEN: str | None = None
     BEDROCK_OCR_MODEL_ID: str = "qwen.qwen3-vl-235b-a22b"
 
+    # RECORD-1: 스크랩 이미지를 저장하는 S3 버킷. 비밀값이 아니므로 ConfigMap/
+    # 환경변수로 주입하며(app/services/s3_upload.py), 코드에 하드코딩하지 않는다.
+    # 실제 업로드 연결과 CloudFront URL 생성은 RECORD-2에서 진행한다.
+    SCRAP_S3_BUCKET: str = "dpyb-scrap-image"
+
     AUTH_API: str
 
     # backend-book 서재 API Base URL. /covers OCR 이후 사용자의 개인 서재에
