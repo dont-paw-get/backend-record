@@ -274,6 +274,173 @@ def test_ocr_sentences_response_includes_scrap_image_url_and_keeps_scrap_id(monk
     assert body["scrap_id"] == FAKE_SCRAP_ID
 
 
+def test_ocr_sentences_default_param_still_auto_saves_scrap(monkeypatch):
+    """save_scrap 파라미터를 전혀 보내지 않으면 기존과 동일하게 자동 저장된다."""
+    create_scrap_called = {"value": False}
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        create_scrap_called["value"] = True
+        return FAKE_SCRAP_ID
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
+
+    response = client.post(
+        OCR_URL,
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert create_scrap_called["value"] is True
+    assert response.json()["scrap_id"] == FAKE_SCRAP_ID
+
+
+def test_ocr_sentences_save_scrap_true_explicit_calls_create_scrap(monkeypatch):
+    create_scrap_called = {"value": False}
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        create_scrap_called["value"] = True
+        return FAKE_SCRAP_ID
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=true",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert create_scrap_called["value"] is True
+    assert response.json()["scrap_id"] == FAKE_SCRAP_ID
+
+
+def test_ocr_sentences_save_scrap_false_succeeds_without_calling_create_scrap(monkeypatch):
+    """OCR-only 모드: OCR은 성공하지만 backend-book 스크랩 생성은 절대 호출되지 않는다."""
+    create_scrap_called = {"value": False}
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_create_scrap(access_token, book_id, **kwargs):
+        create_scrap_called["value"] = True
+        return FAKE_SCRAP_ID
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr("app.api.ocr.create_scrap", fake_create_scrap)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert create_scrap_called["value"] is False
+
+
+def test_ocr_sentences_save_scrap_false_still_uploads_to_s3(monkeypatch):
+    captured = {"call_count": 0}
+
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    async def fake_upload(image_bytes, content_type, client=None):
+        captured["call_count"] += 1
+        return FAKE_OBJECT_KEY
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+    monkeypatch.setattr(s3_upload, "upload_scrap_image", fake_upload)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert captured["call_count"] == 1
+
+
+def test_ocr_sentences_save_scrap_false_returns_cloudfront_url(monkeypatch):
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scrap_image_url"] == FAKE_CLOUDFRONT_URL
+
+
+def test_ocr_sentences_save_scrap_false_returns_null_scrap_id(monkeypatch):
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scrap_id"] is None
+
+
+def test_ocr_sentences_save_scrap_false_still_returns_ocr_fields(monkeypatch):
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        return _fake_bedrock_result()
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.jpg", b"fake-bytes", JPEG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["text"] == "첫 번째 줄\n두 번째 줄"
+    assert body["lines"] == ["첫 번째 줄", "두 번째 줄"]
+    assert body["request_id"] == "22222222-2222-2222-2222-222222222222"
+    assert body["confidence"] == 0.97
+    assert body["provider"] == "bedrock"
+    assert body["book_id"] == FAKE_BOOK_ID
+
+
+def test_ocr_sentences_save_scrap_false_accepts_png(monkeypatch):
+    async def fake_extract(image_bytes, image_format, model_id=None):
+        assert image_format == "png"
+        return _fake_bedrock_result()
+
+    monkeypatch.setattr(bedrock_ocr, "extract_text_from_image", fake_extract)
+
+    response = client.post(
+        f"{OCR_URL}?save_scrap=false",
+        files={"image": ("sentence.png", b"fake-bytes", PNG_CONTENT_TYPE)},
+        data=DEFAULT_FORM,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["scrap_id"] is None
+
+
 def test_ocr_sentences_s3_upload_failure_does_not_call_create_scrap(monkeypatch):
     """S3 업로드가 실패하면 backend-book 스크랩 생성 API를 호출하지 않아야 한다."""
     create_scrap_called = {"value": False}
