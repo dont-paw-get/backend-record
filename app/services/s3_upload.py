@@ -131,3 +131,14 @@ async def upload_scrap_image(image_bytes: bytes, content_type: str, client=None)
     return await asyncio.to_thread(
         _sync_upload_scrap_image, image_bytes, content_type, client
     )
+
+
+def build_cloudfront_url(object_key: str) -> str:
+    """S3 object key로부터 스크랩 이미지의 CloudFront URL을 생성한다.
+
+    URL 조합은 이 함수 한 곳에서만 한다. object_key는 이미
+    "scraps/<uuid>.<ext>" 형태(선행 슬래시 없음)이므로 그대로 도메인 뒤에
+    붙이면 된다(예: "scraps/..." + 도메인 -> ".../scraps/..." 이지 "/scraps/scraps/..."가
+    아니다).
+    """
+    return f"https://{settings.SCRAP_CLOUDFRONT_DOMAIN}/{object_key}"

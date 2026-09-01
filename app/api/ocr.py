@@ -16,12 +16,13 @@ from app.providers.book_provider import (
     search_book_by_isbn,
 )
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
-from app.services import bedrock_ocr
+from app.services import bedrock_ocr, s3_upload
 from app.services.bedrock_ocr import (
     BedrockOcrEmptyResultError,
     BedrockOcrRequestFailedError,
     BedrockOcrTimeoutError,
 )
+from app.services.s3_upload import S3UploadError
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,13 @@ async def create_ocr_sentences(
     ] = None,
     scrap_image_url: Annotated[
         str | None,
-        Form(description="스크랩 원본 이미지 URL (선택). 프론트가 업로드한 경우 전달"),
+        Form(
+            description=(
+                "(더 이상 사용되지 않음, 하위 호환을 위해 요청 필드만 유지) "
+                "RECORD-2부터 실제 스크랩 이미지 URL은 OCR에 사용한 원본 이미지를 "
+                "S3/CloudFront에 저장해 서버가 직접 생성한다."
+            )
+        ),
     ] = None,
     provider: Literal["clova", "bedrock"] | None = Query(
         default=None,
@@ -94,13 +101,30 @@ async def create_ocr_sentences(
             detail="이미지에서 인식된 텍스트가 없습니다.",
         )
 
+    # RECORD-2: OCR이 성공한 이미지만 S3에 저장한다. 여기서 실패하면 backend-book에
+    # 잘못되거나 없는 이미지 URL로 스크랩을 생성하지 않도록 create_scrap을 호출하지
+    # 않고 즉시 오류로 응답한다. 요청에 scrap_image_url이 별도로 실려 와도, 이번
+    # 스크랩의 실제 원본 이미지를 저장한 이 URL로 대체한다.
+    try:
+        object_key = await s3_upload.upload_scrap_image(
+            image_bytes, image.content_type
+        )
+    except S3UploadError as exc:
+        logger.warning("scrap image S3 upload failed (book_id=%s): %s", book_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="스크랩 이미지 저장 처리 중 오류가 발생했습니다.",
+        )
+
+    generated_scrap_image_url = s3_upload.build_cloudfront_url(object_key)
+
     try:
         scrap_id = await create_scrap(
             access_token,
             book_id,
             sentence=result.text,
             page_number=page_number,
-            scrap_image_url=scrap_image_url,
+            scrap_image_url=generated_scrap_image_url,
             memo=memo,
         )
     except BookProviderError as exc:
@@ -119,6 +143,7 @@ async def create_ocr_sentences(
         provider="bedrock",
         book_id=book_id,
         scrap_id=scrap_id,
+        scrap_image_url=generated_scrap_image_url,
     )
 
 
