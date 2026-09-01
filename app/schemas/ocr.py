@@ -21,6 +21,13 @@ class OcrSentencesResponse(BaseModel):
             "(POST /api/v1/library/books/{bookId}/scraps 결과)"
         )
     )
+    scrap_image_url: str = Field(
+        description=(
+            "RECORD-2: OCR에 사용한 원본 이미지를 S3에 저장한 뒤 생성한 "
+            "CloudFront URL. backend-book 스크랩 생성 요청의 scrapImageUrl로도 "
+            "함께 전달된다."
+        )
+    )
 
 
 class OcrCoverResponse(BaseModel):

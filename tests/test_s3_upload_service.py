@@ -103,6 +103,22 @@ def test_unsupported_content_type_rejected_without_calling_s3():
     fake_client.put_object.assert_not_called()
 
 
+def test_build_cloudfront_url_combines_domain_and_object_key():
+    url = s3_upload.build_cloudfront_url("scraps/550e8400-e29b-41d4-a716-446655440000.jpg")
+
+    assert url == (
+        f"https://{settings.SCRAP_CLOUDFRONT_DOMAIN}/"
+        "scraps/550e8400-e29b-41d4-a716-446655440000.jpg"
+    )
+
+
+def test_build_cloudfront_url_does_not_duplicate_scraps_prefix():
+    url = s3_upload.build_cloudfront_url("scraps/some-uuid.png")
+
+    assert "/scraps/scraps/" not in url
+    assert url.count("scraps/") == 1
+
+
 def test_original_filename_is_never_used_as_key():
     """사용자가 보낸 원본 filename을 넘겨도(인자로 받지 않으므로) key에 반영될 수 없다."""
     fake_client = MagicMock()
