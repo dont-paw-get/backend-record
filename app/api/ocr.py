@@ -72,10 +72,23 @@ async def create_ocr_sentences(
         default=None,
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",
     ),
+    save_scrap: bool = Query(
+        default=True,
+        description=(
+            "RECORD-3A: true(기본값)면 기존과 동일하게 OCR 후 backend-book에 "
+            "스크랩을 자동 저장하고 scrap_id를 반환한다. false면 OCR과 S3 이미지 "
+            "저장만 수행하고(backend-book 저장은 호출하지 않음) scrap_id=null을 "
+            "반환한다 - 사용자가 확인/수정 후 별도로 스크랩 저장 API를 호출하는 "
+            "흐름을 위한 OCR-only 모드."
+        ),
+    ),
 ) -> OcrSentencesResponse:
     """
-    책 문장 이미지를 업로드받아 OCR 텍스트를 추출하고, 인식한 문장을
-    backend-book 서재 도서(book_id)의 스크랩으로 등록한다.
+    책 문장 이미지를 업로드받아 OCR 텍스트를 추출한다.
+
+    save_scrap=true(기본값)이면 인식한 문장을 backend-book 서재 도서(book_id)의
+    스크랩으로 자동 등록한다(기존 동작, 하위 호환). save_scrap=false이면 OCR과
+    S3 이미지 저장까지만 수행하고 backend-book 저장은 호출하지 않는다.
     """
     image_format = _validate_content_type(image.content_type)
     image_bytes = await image.read()
@@ -118,21 +131,27 @@ async def create_ocr_sentences(
 
     generated_scrap_image_url = s3_upload.build_cloudfront_url(object_key)
 
-    try:
-        scrap_id = await create_scrap(
-            access_token,
-            book_id,
-            sentence=result.text,
-            page_number=page_number,
-            scrap_image_url=generated_scrap_image_url,
-            memo=memo,
-        )
-    except BookProviderError as exc:
-        logger.warning("create_scrap failed (book_id=%s): %s", book_id, exc)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
-        )
+    # RECORD-3A: save_scrap=false는 OCR-only 모드로, backend-book 저장을 전혀
+    # 호출하지 않는다. 원본 이미지는 두 모드 모두 위에서 이미 S3에 저장했으므로,
+    # 이후 사용자가 확인/수정 후 별도로 스크랩 저장 API를 호출할 때
+    # 이 generated_scrap_image_url을 그대로 사용할 수 있다.
+    scrap_id = None
+    if save_scrap:
+        try:
+            scrap_id = await create_scrap(
+                access_token,
+                book_id,
+                sentence=result.text,
+                page_number=page_number,
+                scrap_image_url=generated_scrap_image_url,
+                memo=memo,
+            )
+        except BookProviderError as exc:
+            logger.warning("create_scrap failed (book_id=%s): %s", book_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
+            )
 
     return OcrSentencesResponse(
         text=result.text,

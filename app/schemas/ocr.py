@@ -15,17 +15,21 @@ class OcrSentencesResponse(BaseModel):
     book_id: Any = Field(
         description="스크랩을 등록한 backend-book 서재 도서의 ID (요청으로 받은 book_id)"
     )
-    scrap_id: Any = Field(
+    scrap_id: Any | None = Field(
+        default=None,
         description=(
             "backend-book에 생성된 스크랩의 ID "
-            "(POST /api/v1/library/books/{bookId}/scraps 결과)"
-        )
+            "(POST /api/v1/library/books/{bookId}/scraps 결과). "
+            "RECORD-3A: save_scrap=false(OCR-only 모드)이면 backend-book 저장을 "
+            "호출하지 않으므로 null이다."
+        ),
     )
     scrap_image_url: str = Field(
         description=(
             "RECORD-2: OCR에 사용한 원본 이미지를 S3에 저장한 뒤 생성한 "
-            "CloudFront URL. backend-book 스크랩 생성 요청의 scrapImageUrl로도 "
-            "함께 전달된다."
+            "CloudFront URL. save_scrap=true이면 backend-book 스크랩 생성 요청의 "
+            "scrapImageUrl로도 함께 전달된다. save_scrap=false(OCR-only)에서도 "
+            "항상 채워지며, 사용자가 확인 후 별도로 스크랩을 저장할 때 사용한다."
         )
     )
 
