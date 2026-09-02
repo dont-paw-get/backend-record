@@ -37,6 +37,22 @@ spec:
                 name: backend-record-config
             - secretRef:
                 name: backend-record-secret
+          # CLIAR-201: OpenTelemetry Resource 에 담을 실행 환경(Pod) 정보.
+          # observability 초기화 코드가 POD_NAME/POD_NAMESPACE/NODE_NAME 을
+          # 읽어 k8s.* resource attribute 로 사용한다. (없어도 정상 동작)
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
           readinessProbe:
             httpGet:
               path: /health

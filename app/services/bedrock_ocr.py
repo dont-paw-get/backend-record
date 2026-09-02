@@ -13,10 +13,16 @@ import boto3
 import botocore.exceptions
 
 from botocore.config import Config
+from opentelemetry import trace
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# OCR 처리(이미지 축소 + Bedrock 호출 + 응답 파싱)를 하나로 묶는 상위 span.
+# botocore instrumentation 이 만드는 Bedrock 호출 span 은 이 span 의 자식이
+# 된다. 함수 단위로 세분화하지 않고 이 한 개만 둔다.
+_tracer = trace.get_tracer(__name__)
 
 
 class BedrockOcrError(Exception):
@@ -547,14 +553,25 @@ async def extract_text_from_image(
     request_id = str(uuid.uuid4())
     bedrock_client = client or get_bedrock_runtime_client()
 
-    return await asyncio.to_thread(
-        _sync_invoke_converse,
-        bedrock_client,
-        image_bytes,
-        image_format,
-        target_model_id,
-        request_id,
-    )
+    with _tracer.start_as_current_span("record.ocr") as span:
+        span.set_attribute("record.ocr.type", "sentences")
+        span.set_attribute("record.ocr.image_format", _normalize_image_format(image_format))
+        span.set_attribute("record.ocr.image_bytes", len(image_bytes))
+        span.set_attribute("record.ocr.model_id", target_model_id)
+
+        result = await asyncio.to_thread(
+            _sync_invoke_converse,
+            bedrock_client,
+            image_bytes,
+            image_format,
+            target_model_id,
+            request_id,
+        )
+
+        span.set_attribute("record.ocr.line_count", len(result.lines))
+        if result.language:
+            span.set_attribute("record.ocr.language", result.language)
+        return result
 
 
 async def extract_book_cover_candidates(
@@ -585,11 +602,21 @@ async def extract_book_cover_candidates(
     request_id = str(uuid.uuid4())
     bedrock_client = client or get_bedrock_runtime_client()
 
-    return await asyncio.to_thread(
-        _sync_invoke_cover_converse,
-        bedrock_client,
-        image_bytes,
-        image_format,
-        target_model_id,
-        request_id,
-    )
+    with _tracer.start_as_current_span("record.ocr") as span:
+        span.set_attribute("record.ocr.type", "cover")
+        span.set_attribute("record.ocr.image_format", _normalize_image_format(image_format))
+        span.set_attribute("record.ocr.image_bytes", len(image_bytes))
+        span.set_attribute("record.ocr.model_id", target_model_id)
+
+        result = await asyncio.to_thread(
+            _sync_invoke_cover_converse,
+            bedrock_client,
+            image_bytes,
+            image_format,
+            target_model_id,
+            request_id,
+        )
+
+        span.set_attribute("record.ocr.line_count", len(result.lines))
+        span.set_attribute("record.ocr.isbn_detected", result.isbn is not None)
+        return result

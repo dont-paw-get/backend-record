@@ -47,6 +47,26 @@ class Settings(BaseSettings):
     AWS_SESSION_TOKEN: str | None = None
     BEDROCK_OCR_MODEL_ID: str = "qwen.qwen3-vl-235b-a22b"
 
+    # ------------------------------------------------------------------
+    # Observability (CLIAR-201): OpenTelemetry 분산 트레이싱 / 구조화 로깅
+    #
+    # OTEL_EXPORTER_OTLP_ENDPOINT 가 설정된 경우에만 OTLP exporter 를
+    # 활성화한다. 값이 없으면(로컬 개발 등) tracing 은 no-op 로 동작하고
+    # 애플리케이션은 정상 기동한다. OTel SDK 표준 환경변수와 이름을 맞춰
+    # 두어, 필요하면 SDK 가 직접 읽는 다른 OTEL_* 값들(OTEL_TRACES_SAMPLER
+    # 등)도 같은 ConfigMap 에서 함께 주입할 수 있다.
+    # ------------------------------------------------------------------
+    OTEL_SERVICE_NAME: str = "backend-record"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
+    # parentbased_traceidratio 샘플러의 비율 인자(0.0 ~ 1.0). dev=1.0.
+    OTEL_TRACES_SAMPLER_ARG: float = 1.0
+    # 배포/실행 환경 식별용. Resource 의 service.version 으로 사용한다.
+    # (미설정 시 resource attribute 생략)
+    OTEL_SERVICE_VERSION: str | None = None
+
+    # 애플리케이션 로그 레벨. stdout JSON 로깅 핸들러에 적용된다.
+    LOG_LEVEL: str = "INFO"
+
     AUTH_API: str
 
     # backend-book 서재 API Base URL. /covers OCR 이후 사용자의 개인 서재에

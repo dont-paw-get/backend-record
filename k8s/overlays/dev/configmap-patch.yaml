@@ -10,3 +10,15 @@ data:
   # BOOK_API: 현재 앱 코드에서 미사용이나 향후 backend-book 연동 대비로 함께 주입.
   AUTH_API: "http://k8s-dpybauth-backenda-c303977024-255533103.ap-northeast-2.elb.amazonaws.com"
   BOOK_API: "http://k8s-dpybbook-backendb-d17a725d36-1113312703.ap-northeast-2.elb.amazonaws.com"
+
+  # --- Observability (CLIAR-201): OpenTelemetry 분산 트레이싱 (dev) ---
+  # OTEL_EXPORTER_OTLP_ENDPOINT 가 있을 때만 exporter 가 활성화된다.
+  # dpgy-infra 의 OTel Collector(OTLP HTTP) → Grafana Tempo 로 전송된다.
+  OTEL_SERVICE_NAME: "backend-record"
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4318"
+  OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
+  # parentbased_traceidratio 샘플러 비율. dev 는 전량 샘플링(1.0).
+  OTEL_TRACES_SAMPLER: "parentbased_traceidratio"
+  OTEL_TRACES_SAMPLER_ARG: "1.0"
+  # GenAI(Bedrock) 프롬프트/이미지 본문을 span 에 절대 남기지 않는다(민감정보 보호).
+  OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "false"
