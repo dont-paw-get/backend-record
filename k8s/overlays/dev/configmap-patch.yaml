@@ -10,6 +10,7 @@ data:
   # BOOK_API: 현재 앱 코드에서 미사용이나 향후 backend-book 연동 대비로 함께 주입.
   AUTH_API: "http://k8s-dpybauth-backenda-c303977024-255533103.ap-northeast-2.elb.amazonaws.com"
   BOOK_API: "http://k8s-dpybbook-backendb-d17a725d36-1113312703.ap-northeast-2.elb.amazonaws.com"
+  DISCOVERY_API: "http://k8s-dpybdisc-backendd-bc2eec8a3f-1704260439.ap-northeast-2.elb.amazonaws.com"
 
   # --- Observability (CLIAR-201): OpenTelemetry 분산 트레이싱 (dev) ---
   # OTEL_EXPORTER_OTLP_ENDPOINT 가 있을 때만 exporter 가 활성화된다.

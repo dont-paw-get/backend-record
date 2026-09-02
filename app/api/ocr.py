@@ -15,6 +15,7 @@ from app.providers.book_provider import (
     register_library_book,
     search_book_by_isbn,
 )
+from app.providers.discovery_provider import classify_genre_by_isbn
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
 from app.services import bedrock_ocr, s3_upload
 from app.services.bedrock_ocr import (
@@ -234,6 +235,7 @@ async def create_ocr_cover(
         search.book if search is not None else None
     )
 
+    genre = None
     if already_registered:
         book_id = searched_book.get("bookId")
     else:
@@ -257,12 +259,20 @@ async def create_ocr_cover(
             published_date = None
             total_pages = None
             cover_url = None
+
+        # ISBN/제목을 인식했으면 backend-discovery로 표준 장르(genre_type)를 분류받아
+        # 서재 등록 시 함께 저장한다. 장르는 부가 정보이므로 분류에 실패해도(None)
+        # 도서 등록은 그대로 진행한다(discovery_provider가 예외를 삼키고 None 반환).
+        genre = await classify_genre_by_isbn(
+            isbn=isbn
+        )
         try:
             book_id = await register_library_book(
                 access_token,
                 title=title,
                 author=author,
                 isbn=isbn,
+                genre=genre,
                 publisher=publisher,
                 published_date=published_date,
                 total_pages=total_pages,
@@ -280,6 +290,7 @@ async def create_ocr_cover(
             "ocr_line_count": len(result.lines),
             "isbn_detected": isbn is not None,
             "already_registered": already_registered,
+            "genre_classified": genre is not None,
         },
     )
 

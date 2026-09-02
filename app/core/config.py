@@ -76,10 +76,8 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     AUTH_API: str
-
-    # backend-book 서재 API Base URL. /covers OCR 이후 사용자의 개인 서재에
-    # 책을 등록(POST /api/v1/library/books)하기 위해 사용한다.
     BOOK_API: str
+    DISCOVERY_API: str
 
 
 settings = Settings()
