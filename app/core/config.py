@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     AWS_SESSION_TOKEN: str | None = None
     BEDROCK_OCR_MODEL_ID: str = "qwen.qwen3-vl-235b-a22b"
 
+    # RECORD-1: 스크랩 이미지를 저장하는 S3 버킷. 비밀값이 아니므로 ConfigMap/
+    # 환경변수로 주입하며(app/services/s3_upload.py), 코드에 하드코딩하지 않는다.
+    SCRAP_S3_BUCKET: str = "dpyb-scrap-image"
+
+    # RECORD-2: 업로드된 스크랩 이미지를 서비스하는 CloudFront 도메인(scheme 없음).
+    # URL 조합은 app/services/s3_upload.py의 build_cloudfront_url() 한 곳에서만 한다.
+    SCRAP_CLOUDFRONT_DOMAIN: str = "d3qnwig98jio0e.cloudfront.net"
+
     # ------------------------------------------------------------------
     # Observability (CLIAR-201): OpenTelemetry 분산 트레이싱 / 구조화 로깅
     #

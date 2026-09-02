@@ -14,3 +14,7 @@ data:
   # Qwen3-VL 모델이 us-east-1 에만 있어 여기서 지정한다.
   BEDROCK_REGION: "us-east-1"
   BEDROCK_OCR_MODEL_ID: "qwen.qwen3-vl-235b-a22b"
+  # RECORD-1: 스크랩 이미지 업로드 대상 S3 버킷.
+  SCRAP_S3_BUCKET: "dpyb-scrap-image"
+  # RECORD-2: 스크랩 이미지를 서비스하는 CloudFront 도메인.
+  SCRAP_CLOUDFRONT_DOMAIN: "d3qnwig98jio0e.cloudfront.net"

@@ -16,12 +16,13 @@ from app.providers.book_provider import (
     search_book_by_isbn,
 )
 from app.schemas.ocr import OcrCoverResponse, OcrSentencesResponse
-from app.services import bedrock_ocr
+from app.services import bedrock_ocr, s3_upload
 from app.services.bedrock_ocr import (
     BedrockOcrEmptyResultError,
     BedrockOcrRequestFailedError,
     BedrockOcrTimeoutError,
 )
+from app.services.s3_upload import S3UploadError
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,13 @@ async def create_ocr_sentences(
     ] = None,
     scrap_image_url: Annotated[
         str | None,
-        Form(description="스크랩 원본 이미지 URL (선택). 프론트가 업로드한 경우 전달"),
+        Form(
+            description=(
+                "(더 이상 사용되지 않음, 하위 호환을 위해 요청 필드만 유지) "
+                "RECORD-2부터 실제 스크랩 이미지 URL은 OCR에 사용한 원본 이미지를 "
+                "S3/CloudFront에 저장해 서버가 직접 생성한다."
+            )
+        ),
     ] = None,
     provider: Literal["clova", "bedrock"] | None = Query(
         default=None,
@@ -65,10 +72,23 @@ async def create_ocr_sentences(
         default=None,
         description="사용할 Bedrock 모델 ID (예: 'qwen.qwen3-vl-235b-a22b'). 미지정 시 설정값(BEDROCK_OCR_MODEL_ID) 사용",
     ),
+    save_scrap: bool = Query(
+        default=True,
+        description=(
+            "RECORD-3A: true(기본값)면 기존과 동일하게 OCR 후 backend-book에 "
+            "스크랩을 자동 저장하고 scrap_id를 반환한다. false면 OCR과 S3 이미지 "
+            "저장만 수행하고(backend-book 저장은 호출하지 않음) scrap_id=null을 "
+            "반환한다 - 사용자가 확인/수정 후 별도로 스크랩 저장 API를 호출하는 "
+            "흐름을 위한 OCR-only 모드."
+        ),
+    ),
 ) -> OcrSentencesResponse:
     """
-    책 문장 이미지를 업로드받아 OCR 텍스트를 추출하고, 인식한 문장을
-    backend-book 서재 도서(book_id)의 스크랩으로 등록한다.
+    책 문장 이미지를 업로드받아 OCR 텍스트를 추출한다.
+
+    save_scrap=true(기본값)이면 인식한 문장을 backend-book 서재 도서(book_id)의
+    스크랩으로 자동 등록한다(기존 동작, 하위 호환). save_scrap=false이면 OCR과
+    S3 이미지 저장까지만 수행하고 backend-book 저장은 호출하지 않는다.
     """
     image_format = _validate_content_type(image.content_type)
     image_bytes = await image.read()
@@ -94,21 +114,44 @@ async def create_ocr_sentences(
             detail="이미지에서 인식된 텍스트가 없습니다.",
         )
 
+    # RECORD-2: OCR이 성공한 이미지만 S3에 저장한다. 여기서 실패하면 backend-book에
+    # 잘못되거나 없는 이미지 URL로 스크랩을 생성하지 않도록 create_scrap을 호출하지
+    # 않고 즉시 오류로 응답한다. 요청에 scrap_image_url이 별도로 실려 와도, 이번
+    # 스크랩의 실제 원본 이미지를 저장한 이 URL로 대체한다.
     try:
-        scrap_id = await create_scrap(
-            access_token,
-            book_id,
-            sentence=result.text,
-            page_number=page_number,
-            scrap_image_url=scrap_image_url,
-            memo=memo,
+        object_key = await s3_upload.upload_scrap_image(
+            image_bytes, image.content_type
         )
-    except BookProviderError as exc:
-        logger.warning("create_scrap failed (book_id=%s): %s", book_id, exc)
+    except S3UploadError as exc:
+        logger.warning("scrap image S3 upload failed (book_id=%s): %s", book_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
+            detail="스크랩 이미지 저장 처리 중 오류가 발생했습니다.",
         )
+
+    generated_scrap_image_url = s3_upload.build_cloudfront_url(object_key)
+
+    # RECORD-3A: save_scrap=false는 OCR-only 모드로, backend-book 저장을 전혀
+    # 호출하지 않는다. 원본 이미지는 두 모드 모두 위에서 이미 S3에 저장했으므로,
+    # 이후 사용자가 확인/수정 후 별도로 스크랩 저장 API를 호출할 때
+    # 이 generated_scrap_image_url을 그대로 사용할 수 있다.
+    scrap_id = None
+    if save_scrap:
+        try:
+            scrap_id = await create_scrap(
+                access_token,
+                book_id,
+                sentence=result.text,
+                page_number=page_number,
+                scrap_image_url=generated_scrap_image_url,
+                memo=memo,
+            )
+        except BookProviderError as exc:
+            logger.warning("create_scrap failed (book_id=%s): %s", book_id, exc)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
+            )
 
     logger.info(
         "ocr sentences request completed",
@@ -116,6 +159,8 @@ async def create_ocr_sentences(
             "ocr_line_count": len(result.lines),
             "ocr_language": result.language,
             "ocr_confidence": result.confidence,
+            "image_stored": True,
+            "save_scrap": save_scrap,
             "scrap_created": scrap_id is not None,
         },
     )
@@ -129,6 +174,7 @@ async def create_ocr_sentences(
         provider="bedrock",
         book_id=book_id,
         scrap_id=scrap_id,
+        scrap_image_url=generated_scrap_image_url,
     )
 
 
