@@ -7,6 +7,8 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 CLASSIFY_GENRE_PATH = "/api/v1/classify-genre"
+
+
 _CLASSIFY_TIMEOUT_SECONDS = 15.0
 
 
@@ -32,7 +34,7 @@ async def classify_genre_by_isbn(
 
     try:
         async with httpx.AsyncClient(timeout=_CLASSIFY_TIMEOUT_SECONDS) as client:
-            response = await client.post(url, headers=headers, json=body)
+            response = await client.post(url, headers={}, json=body)
     except httpx.HTTPError as exc:
         logger.warning("backend-discovery classify-genre request failed: %s", exc)
         return None
