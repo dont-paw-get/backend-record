@@ -6,6 +6,7 @@ RECORD-1: OCR endpoint와의 연결(RECORD-2에서 진행) 없이, S3에 안전�
 """
 import asyncio
 import logging
+import threading
 import uuid
 
 import boto3
@@ -60,6 +61,23 @@ def get_s3_client():
     return session.client("s3", region_name=settings.AWS_REGION)
 
 
+# boto3 클라이언트 생성은 서비스 모델 로딩 + 자격증명 체인 해석(IRSA 시 네트워크
+# 조회 포함)이 있어 요청당 오버헤드가 크다. 저수준 boto3 클라이언트는 메서드
+# 호출에 대해 thread-safe 하므로 한 번 만들어 모든 업로드가 재사용한다.
+_cached_s3_client = None
+_s3_client_lock = threading.Lock()
+
+
+def _get_cached_s3_client():
+    """프로세스 전역에서 재사용하는 S3 클라이언트를 반환한다."""
+    global _cached_s3_client
+    if _cached_s3_client is None:
+        with _s3_client_lock:
+            if _cached_s3_client is None:
+                _cached_s3_client = get_s3_client()
+    return _cached_s3_client
+
+
 def _resolve_extension(content_type: str) -> str:
     try:
         return _CONTENT_TYPE_TO_EXTENSION[content_type]
@@ -74,7 +92,7 @@ def _sync_upload_scrap_image(image_bytes: bytes, content_type: str, client=None)
     extension = _resolve_extension(content_type)
     object_key = f"{_SCRAP_KEY_PREFIX}/{uuid.uuid4()}.{extension}"
 
-    s3_client = client or get_s3_client()
+    s3_client = client or _get_cached_s3_client()
 
     try:
         # 버킷이 Private이므로 ACL은 지정하지 않는다. IAM 정책이 PutObject만
@@ -106,27 +124,8 @@ def _sync_upload_scrap_image(image_bytes: bytes, content_type: str, client=None)
 
 
 async def upload_scrap_image(image_bytes: bytes, content_type: str, client=None) -> str:
-    """스크랩 이미지를 S3(settings.SCRAP_S3_BUCKET)에 업로드하고 object key를 반환한다.
-
-    object key는 항상 새로 생성한 UUID를 사용한다("scraps/<uuid>.<ext>").
-    사용자가 보낸 원본 filename은 어디에도 사용하지 않으므로 경로 조작이나
-    다른 업로드와의 key 충돌 위험이 없다. 확장자는 신뢰할 수 없는 원본
-    filename이 아니라 Content-Type으로부터만 결정한다.
-
-    boto3 호출은 블로킹이므로 app/services/bedrock_ocr.py와 동일하게
-    asyncio.to_thread로 실행해 이벤트 루프를 막지 않는다.
-
-    Args:
-        image_bytes: 업로드할 이미지 바이트.
-        content_type: 이미지의 MIME Content-Type (예: "image/jpeg").
-        client: 테스트나 사용자 정의 boto3 S3 클라이언트 주입용.
-
-    Returns:
-        생성된 S3 object key (예: "scraps/550e8400-....jpg").
-
-    Raises:
-        UnsupportedImageContentTypeError: 지원하지 않는 Content-Type인 경우.
-        S3UploadRequestFailedError: S3 PutObject 호출이 실패한 경우.
+    """
+    스크랩 이미지를 S3(settings.SCRAP_S3_BUCKET)에 업로드하고 object key를 반환한다.
     """
     return await asyncio.to_thread(
         _sync_upload_scrap_image, image_bytes, content_type, client
@@ -134,11 +133,7 @@ async def upload_scrap_image(image_bytes: bytes, content_type: str, client=None)
 
 
 def build_cloudfront_url(object_key: str) -> str:
-    """S3 object key로부터 스크랩 이미지의 CloudFront URL을 생성한다.
-
-    URL 조합은 이 함수 한 곳에서만 한다. object_key는 이미
-    "scraps/<uuid>.<ext>" 형태(선행 슬래시 없음)이므로 그대로 도메인 뒤에
-    붙이면 된다(예: "scraps/..." + 도메인 -> ".../scraps/..." 이지 "/scraps/scraps/..."가
-    아니다).
+    """
+    S3 object key로부터 스크랩 이미지의 CloudFront URL을 생성한다.
     """
     return f"https://{settings.SCRAP_CLOUDFRONT_DOMAIN}/{object_key}"

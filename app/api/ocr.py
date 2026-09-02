@@ -260,9 +260,6 @@ async def create_ocr_cover(
             total_pages = None
             cover_url = None
 
-        # ISBN/제목을 인식했으면 backend-discovery로 표준 장르(genre_type)를 분류받아
-        # 서재 등록 시 함께 저장한다. 장르는 부가 정보이므로 분류에 실패해도(None)
-        # 도서 등록은 그대로 진행한다(discovery_provider가 예외를 삼키고 None 반환).
         genre = await classify_genre_by_isbn(
             isbn=isbn
         )
@@ -278,7 +275,7 @@ async def create_ocr_cover(
                 total_pages=total_pages,
                 cover_url=cover_url,
             )
-        except BookProviderError:
+        except BookProviderError:  
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="서재 책 등록 처리 중 오류가 발생했습니다.",

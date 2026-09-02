@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import re
+import threading
 import uuid
 
 import boto3
@@ -96,6 +97,24 @@ def get_bedrock_runtime_client():
     # 호출한다. 파드의 AWS_REGION(서울)과 분리해 두어야 서비스 홈 리전은 유지하면서
     # Qwen3-VL 을 호출할 수 있다.
     return session.client("bedrock-runtime", region_name=settings.BEDROCK_REGION, config=boto_config)
+
+
+# boto3 클라이언트 생성은 서비스 모델 로딩 + 자격증명 체인 해석(IRSA 시 네트워크
+# 조회 포함)이 있어 요청당 수십~수백 ms가 든다. 저수준 boto3 클라이언트는 메서드
+# 호출에 대해 thread-safe 하므로(생성만 thread-safe 하지 않다) 한 번 만들어 모든
+# 요청이 재사용한다. 생성 경합은 lock 으로 막고, 최초 1회만 만든다.
+_cached_bedrock_client = None
+_bedrock_client_lock = threading.Lock()
+
+
+def _get_cached_bedrock_runtime_client():
+    """프로세스 전역에서 재사용하는 Bedrock-Runtime 클라이언트를 반환한다."""
+    global _cached_bedrock_client
+    if _cached_bedrock_client is None:
+        with _bedrock_client_lock:
+            if _cached_bedrock_client is None:
+                _cached_bedrock_client = get_bedrock_runtime_client()
+    return _cached_bedrock_client
 
 
 def _normalize_image_format(image_format: str) -> str:
@@ -411,29 +430,22 @@ _ISBN_NON_DIGIT_RE = re.compile(r"[^0-9Xx]")
 
 
 def _extract_isbn(lines: list[str]) -> str | None:
-    """OCR 줄 목록에서 ISBN을 찾아 하이픈·공백을 제거한 숫자 문자열로 반환한다.
-
-    책 표지 하단에는 보통 'ISBN 979-11-86343-13-5' 같은 라벨 표기와
-    바코드 아래 숫자('9 791186 343135')가 함께 인쇄된다. 둘 다 하이픈/
-    공백만 다를 뿐 같은 값이므로, 구분자를 제거하고 다음 우선순위로 찾는다.
-
-    1. 'ISBN' 라벨이 붙은 줄 (가장 신뢰도 높음)
-    2. 라벨이 없으면 모든 줄에서 숫자만 추출
-
-    각 후보에 대해 ISBN-13(978/979로 시작하는 13자리) → ISBN-10(10자리,
-    마지막 자리는 X 허용) 순으로 검사하고, 조건을 만족하는 첫 값을 반환한다.
-    찾지 못하면 None.
-
-    예: ['ISBN 979-11-86343-13-5'] -> '9791186343135'
     """
+    OCR 줄 목록에서 ISBN을 찾아 하이픈·공백을 제거한 숫자 문자열로 반환한다.
+    """
+    # 'ISBN' 라벨이 붙은 줄을 먼저, 그다음 나머지 줄을 검사한다.
+    # 라벨 줄이 부가기호 등으로 매치에 실패해도 바코드 아래 순수 숫자 줄을
+    # 놓치지 않도록 candidates에서 제외하지 않는다.
     labeled = [line for line in lines if "ISBN" in line.upper()]
-    candidates = labeled or list(lines)
+    others = [line for line in lines if "ISBN" not in line.upper()]
 
-    for line in candidates:
+    for line in labeled + others:
         digits = _ISBN_NON_DIGIT_RE.sub("", line).upper()
-        # ISBN-13: 978/979 접두사 + 13자리 숫자
-        if len(digits) == 13 and digits.isdigit() and digits[:3] in ("978", "979"):
-            return digits
+        # ISBN-13: 978/979 접두사 + 13자리 숫자. 한국 책 표지에는 ISBN 뒤에
+        # 5자리 부가기호(예: 'ISBN 979-11-86343-13-5 03810')가 함께 인쇄되는
+        # 경우가 많으므로, 선행 13자리만 잘라서 검사한다.
+        if len(digits) >= 13 and digits[:13].isdigit() and digits[:3] in ("978", "979"):
+            return digits[:13]
         # ISBN-10: 9자리 숫자 + 체크숫자(0~9 또는 X)
         if len(digits) == 10 and digits[:9].isdigit() and (digits[9].isdigit() or digits[9] == "X"):
             return digits
@@ -441,17 +453,8 @@ def _extract_isbn(lines: list[str]) -> str | None:
 
 
 def _parse_cover_content(raw_text: str) -> tuple[str | None, list[str], list[str]]:
-    """책 표지 OCR 모델 응답에서 title/author/lines를 추출한다.
-
-    모델이 markdown code fence로 감싸거나 JSON 파싱에 실패할 가능성을
-    고려하되, 파싱에 실패했을 때 title/author를 억지로 만들어내지 않는다
-    (원문을 lines로만 보존하고 title_candidate=None, author_candidates=[]).
-
-    CLIAR-143 최종 수정: 모델이 응답에 confidence 필드를 포함하더라도
-    이를 읽거나 반환하지 않는다. AWS Bedrock Qwen3-VL은 CLOVA
-    inferConfidence와 동일한 의미의 공식 OCR confidence를 제공하지
-    않으므로, 모델이 생성한 confidence 숫자를 신뢰도 값으로 사용하지
-    않는다 (호출부에서 항상 None으로 반환).
+    """
+    책 표지 OCR 모델 응답에서 title/author/lines를 추출한다.
     """
     import json
 
@@ -551,7 +554,7 @@ async def extract_text_from_image(
     """
     target_model_id = model_id or settings.BEDROCK_OCR_MODEL_ID
     request_id = str(uuid.uuid4())
-    bedrock_client = client or get_bedrock_runtime_client()
+    bedrock_client = client or _get_cached_bedrock_runtime_client()
 
     with _tracer.start_as_current_span("record.ocr") as span:
         span.set_attribute("record.ocr.type", "sentences")
@@ -580,27 +583,12 @@ async def extract_book_cover_candidates(
     model_id: str | None = None,
     client=None,
 ) -> BedrockOcrCoverResult:
-    """책 표지 이미지를 AWS Bedrock (Qwen3-VL 등)에 전달해 제목/저자 후보를 추출한다.
-
-    sentence OCR(extract_text_from_image)과 동일한 Bedrock 호출 로직
-    (_invoke_converse)을 재사용하며, 책 표지 전용 prompt와 응답 파싱만
-    다르다. OCR만으로 제목/저자를 확정할 수 없으므로 결과는 "후보"이며,
-    모델이 확신하지 못하면 None/빈 목록을 그대로 반환한다.
-
-    Args:
-        image_bytes: 업로드된 이미지 바이트.
-        image_format: 이미지 형식 ("jpg", "png", "jpeg" 등).
-        model_id: 사용할 Bedrock 모델 ID (미지정 시 설정값 BEDROCK_OCR_MODEL_ID 사용).
-        client: 테스트나 사용자 정의 boto3 클라이언트 주입용.
-
-    Raises:
-        BedrockOcrTimeoutError: API 호출 시간 초과 시.
-        BedrockOcrRequestFailedError: API 호출 실패 또는 비정상 응답 시.
-        BedrockOcrEmptyResultError: title/author/lines가 모두 비어 있는 경우.
+    """
+    책 표지 이미지를 AWS Bedrock (Qwen3-VL 등)에 전달해 제목/저자 후보를 추출한다.
     """
     target_model_id = model_id or settings.BEDROCK_OCR_MODEL_ID
     request_id = str(uuid.uuid4())
-    bedrock_client = client or get_bedrock_runtime_client()
+    bedrock_client = client or _get_cached_bedrock_runtime_client()
 
     with _tracer.start_as_current_span("record.ocr") as span:
         span.set_attribute("record.ocr.type", "cover")
