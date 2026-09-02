@@ -7,6 +7,7 @@ import asyncio
 from dataclasses import dataclass
 import logging
 import re
+import threading
 import uuid
 
 import boto3
@@ -96,6 +97,24 @@ def get_bedrock_runtime_client():
     # 호출한다. 파드의 AWS_REGION(서울)과 분리해 두어야 서비스 홈 리전은 유지하면서
     # Qwen3-VL 을 호출할 수 있다.
     return session.client("bedrock-runtime", region_name=settings.BEDROCK_REGION, config=boto_config)
+
+
+# boto3 클라이언트 생성은 서비스 모델 로딩 + 자격증명 체인 해석(IRSA 시 네트워크
+# 조회 포함)이 있어 요청당 수십~수백 ms가 든다. 저수준 boto3 클라이언트는 메서드
+# 호출에 대해 thread-safe 하므로(생성만 thread-safe 하지 않다) 한 번 만들어 모든
+# 요청이 재사용한다. 생성 경합은 lock 으로 막고, 최초 1회만 만든다.
+_cached_bedrock_client = None
+_bedrock_client_lock = threading.Lock()
+
+
+def _get_cached_bedrock_runtime_client():
+    """프로세스 전역에서 재사용하는 Bedrock-Runtime 클라이언트를 반환한다."""
+    global _cached_bedrock_client
+    if _cached_bedrock_client is None:
+        with _bedrock_client_lock:
+            if _cached_bedrock_client is None:
+                _cached_bedrock_client = get_bedrock_runtime_client()
+    return _cached_bedrock_client
 
 
 def _normalize_image_format(image_format: str) -> str:
@@ -535,7 +554,7 @@ async def extract_text_from_image(
     """
     target_model_id = model_id or settings.BEDROCK_OCR_MODEL_ID
     request_id = str(uuid.uuid4())
-    bedrock_client = client or get_bedrock_runtime_client()
+    bedrock_client = client or _get_cached_bedrock_runtime_client()
 
     with _tracer.start_as_current_span("record.ocr") as span:
         span.set_attribute("record.ocr.type", "sentences")
@@ -569,7 +588,7 @@ async def extract_book_cover_candidates(
     """
     target_model_id = model_id or settings.BEDROCK_OCR_MODEL_ID
     request_id = str(uuid.uuid4())
-    bedrock_client = client or get_bedrock_runtime_client()
+    bedrock_client = client or _get_cached_bedrock_runtime_client()
 
     with _tracer.start_as_current_span("record.ocr") as span:
         span.set_attribute("record.ocr.type", "cover")
