@@ -17,7 +17,8 @@
   ``service.instance.id`` 등)를 담는다.
 * W3C Trace Context 전파를 사용한다(botocore instrumentation 이 끌어오는
   AWS X-Ray 전파기를 쓰지 않도록 전역 propagator 를 명시적으로 고정한다).
-* ``/health`` 는 server span 대상에서 제외한다(K8s readiness/liveness probe).
+* ``/health``(K8s probe), ``/metrics``(Prometheus 스크레이핑) 는 server span
+  대상에서 제외한다.
 """
 from __future__ import annotations
 
@@ -128,9 +129,10 @@ def _instrument(app, provider) -> None:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
     from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 
-    # inbound HTTP(server span). /health 는 probe 트래픽이므로 제외한다.
+    # inbound HTTP(server span). /health(probe), /metrics(Prometheus 스크레이핑)
+    # 는 트레이스를 만들지 않는다 (ADR-0007 #4).
     FastAPIInstrumentor.instrument_app(
-        app, tracer_provider=provider, excluded_urls="health"
+        app, tracer_provider=provider, excluded_urls="health,metrics"
     )
     # outbound: backend-auth / backend-book 호출(app/providers/*.py 의 httpx.AsyncClient)
     HTTPXClientInstrumentor().instrument(tracer_provider=provider)

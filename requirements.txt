@@ -31,6 +31,13 @@ opentelemetry-instrumentation-fastapi==0.65b0
 opentelemetry-instrumentation-httpx==0.65b0
 opentelemetry-instrumentation-botocore==0.65b0
 
+# observability (Prometheus HTTP metrics)
+# - prometheus-fastapi-instrumentator: FastAPI 요청 계측 + /metrics 노출.
+#   infra Prometheus 가 ServiceMonitor 로 스크레이핑한다. Spring(Micrometer)
+#   호환 메트릭 http_server_requests_seconds_* 를 app/core/metrics.py 에서 정의한다.
+prometheus-client==0.21.1
+prometheus-fastapi-instrumentator==7.0.0
+
 # test
 pytest==8.3.4
 httpx==0.28.0

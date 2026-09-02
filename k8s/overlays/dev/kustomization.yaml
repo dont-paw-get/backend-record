@@ -6,6 +6,8 @@ namespace: dpyb-record-dev
 
 resources:
   - ../../base
+  # 관측 인프라 연동 - 작업 2: Prometheus 스크레이핑용 ServiceMonitor (dev 전용).
+  - servicemonitor.yaml
 
 # 개발은 1개만
 replicas:

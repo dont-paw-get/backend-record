@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     # 애플리케이션 로그 레벨. stdout JSON 로깅 핸들러에 적용된다.
     LOG_LEVEL: str = "INFO"
 
+    # Prometheus HTTP 메트릭(/metrics) 노출 여부. infra Prometheus 가
+    # ServiceMonitor 로 스크레이핑한다. 기본 활성(끄려면 dev overlay 에서 "false").
+    METRICS_ENABLED: bool = True
+
     AUTH_API: str
     BOOK_API: str
     DISCOVERY_API: str

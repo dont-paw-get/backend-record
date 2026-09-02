@@ -1,0 +1,24 @@
+# 관측 인프라 연동 - 작업 2: ServiceMonitor
+#
+# dont-paw-get/infra 의 kube-prometheus-stack Prometheus 가 이 CR 을 읽어
+# backend-record 파드의 /metrics 를 스크레이핑한다. infra Prometheus 는
+# serviceMonitorSelectorNilUsesHelmValues=false 이므로 네임스페이스·라벨
+# 셀렉터 제약이 없다. 아래 selector 가 base/service.yaml 의 Service 라벨과
+# 맞기만 하면 스크레이핑된다.
+#
+# dev 전용: base 가 아닌 dev overlay 에서만 생성한다(네임스페이스 dpyb-record-dev).
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend-record
+  labels:
+    app.kubernetes.io/name: backend-record
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend-record
+  endpoints:
+    - port: http                # base/service.yaml 의 포트 이름(80 → targetPort 8000)
+      path: /metrics
+      interval: 30s
+      scheme: http

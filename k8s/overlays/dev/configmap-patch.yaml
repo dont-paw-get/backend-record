@@ -23,3 +23,12 @@ data:
   OTEL_TRACES_SAMPLER_ARG: "1.0"
   # GenAI(Bedrock) 프롬프트/이미지 본문을 span 에 절대 남기지 않는다(민감정보 보호).
   OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: "false"
+
+  # --- Observability: Prometheus HTTP 메트릭 (dev) ---
+  # infra Prometheus 가 ServiceMonitor(backend-record / dpyb-record-dev)로
+  # /metrics 를 30s 간격 스크레이핑한다. Micrometer 호환 메트릭
+  # http_server_requests_seconds_{count,bucket,sum} 를 application="backend-record"
+  # 라벨로 노출한다(= OTEL_SERVICE_NAME).
+  METRICS_ENABLED: "true"
+  # Micrometer 에 없는 *_created 시계열을 노출하지 않아 출력/카디널리티를 줄인다.
+  PROMETHEUS_DISABLE_CREATED_SERIES: "true"
