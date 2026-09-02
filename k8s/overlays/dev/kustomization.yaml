@@ -18,7 +18,7 @@ replicas:
 images:
   - name: backend-record
     newName: 594532711953.dkr.ecr.ap-northeast-2.amazonaws.com/dpyb-dev/dpyb-record
-    newTag: 207df6596ddfbf2d7f333c1c06c3aca14604a5e2
+    newTag: 5c12ec054ea94f06a62af2c2e8e481b7d18f5469
 
 # 개발 환경에서 달라지는 설정값만 덮어씀
 patches:
