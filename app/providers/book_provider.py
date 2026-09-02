@@ -53,7 +53,6 @@ async def register_library_book(
         "totalPages": total_pages,
         "coverUrl": cover_url,
     }
-    print(body)
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
@@ -104,12 +103,11 @@ async def create_scrap(
             detail="[backend-book/scrap] 유효하지 않은 access token 입니다.",
         )
     if response.status_code not in (status.HTTP_200_OK, status.HTTP_201_CREATED):
+        # 응답 본문(response.text)에는 스크랩 문장 등이 echo 될 수 있어 로그에 남기지 않는다.
         logger.warning(
-            "backend-book create scrap failed (url=%s, book_id=%s, status=%s, body=%s)",
-            url,
+            "backend-book create scrap failed (book_id=%s, status=%s)",
             book_id,
             response.status_code,
-            response.text,
         )
         raise BookProviderError(
             f"backend-book returned status {response.status_code}"

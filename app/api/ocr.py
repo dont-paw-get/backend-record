@@ -153,6 +153,18 @@ async def create_ocr_sentences(
                 detail="문장 스크랩 저장 처리 중 오류가 발생했습니다.",
             )
 
+    logger.info(
+        "ocr sentences request completed",
+        extra={
+            "ocr_line_count": len(result.lines),
+            "ocr_language": result.language,
+            "ocr_confidence": result.confidence,
+            "image_stored": True,
+            "save_scrap": save_scrap,
+            "scrap_created": scrap_id is not None,
+        },
+    )
+
     return OcrSentencesResponse(
         text=result.text,
         lines=result.lines,
@@ -235,6 +247,10 @@ async def create_ocr_cover(
             cover_url = searched_book.get("coverUrl")
         else:
             # 어디에서도 도서 정보를 찾지 못한 경우 OCR 후보로 폴백 등록한다.
+            logger.warning(
+                "cover book lookup found no match; registering from OCR candidates",
+                extra={"isbn_detected": isbn is not None},
+            )
             title = result.title_candidate
             author = result.author_candidates[0] if result.author_candidates else None
             publisher = None
@@ -257,6 +273,15 @@ async def create_ocr_cover(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="서재 책 등록 처리 중 오류가 발생했습니다.",
             )
+
+    logger.info(
+        "ocr cover request completed",
+        extra={
+            "ocr_line_count": len(result.lines),
+            "isbn_detected": isbn is not None,
+            "already_registered": already_registered,
+        },
+    )
 
     return OcrCoverResponse(
         title_candidate=result.title_candidate,

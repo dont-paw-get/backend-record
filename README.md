@@ -210,3 +210,56 @@ curl -X POST "http://127.0.0.1:8000/api/v1/ocr/sentences" \
 ```
 
 일반 `pytest` 실행 시에는 실제 외부 API를 호출하지 않으며 모든 네트워크 호출이 mock으로 대체되어 안전하게 실행됩니다.
+
+## 관찰성 (OpenTelemetry 트레이싱 + 구조화 로깅, CLIAR-201)
+
+backend-record 는 애플리케이션 코드 내부에서(`opentelemetry-instrument`
+wrapper 없이) OpenTelemetry 트레이싱을 초기화하고, stdout 으로 한 줄 JSON
+로그를 출력합니다.
+
+### 트레이싱
+
+* 초기화: `app/core/observability.py` 의 `configure_tracing(app)` (in `app/main.py`)
+* `OTEL_EXPORTER_OTLP_ENDPOINT` 가 **설정된 경우에만** OTLP HTTP/protobuf
+  exporter 를 활성화합니다. 없으면 트레이싱은 no-op 이고 앱은 정상 실행됩니다.
+* 자동 계측: FastAPI(inbound), HTTPX(backend-auth / backend-book 호출),
+  Botocore(AWS Bedrock Runtime `converse`).
+* 커스텀 span: OCR 처리 1개 — `record.ocr` (type=sentences|cover, 이미지 포맷,
+  바이트 길이, 모델 ID, 줄 수만 attribute 로 기록. 원문/이미지 미기록).
+* `/health` 는 server span 대상에서 제외됩니다.
+* Collector 전송은 `BatchSpanProcessor` 백그라운드 스레드가 담당하므로
+  Collector 장애가 API 요청 실패로 이어지지 않습니다.
+
+| 환경변수 | 설명 | dev 값 |
+| --- | --- | --- |
+| `OTEL_SERVICE_NAME` | Tempo `resource.service.name` | `backend-record` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTel Collector OTLP HTTP endpoint | `http://otel-collector.monitoring.svc.cluster.local:4318` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP 전송 프로토콜 | `http/protobuf` |
+| `OTEL_TRACES_SAMPLER` | 샘플러 | `parentbased_traceidratio` |
+| `OTEL_TRACES_SAMPLER_ARG` | 샘플링 비율(0.0~1.0) | `1.0` |
+| `OTEL_SERVICE_VERSION` | (선택) `service.version` resource attribute | - |
+| `LOG_LEVEL` | 로그 레벨 | `INFO` |
+
+dev 값은 `k8s/overlays/dev/configmap-patch.yaml` 에 반영되어 있습니다.
+`deployment.environment` 는 `APP_ENV` 에서, `k8s.pod.name` /
+`k8s.namespace.name` / `k8s.node.name` 은 Pod downward API(`POD_NAME` 등)에서
+자동으로 채워집니다. prod overlay 는 이번 작업에서 변경하지 않았습니다.
+
+### 로깅
+
+* 구현: `app/core/logging_config.py` 의 `configure_logging()`
+* stdout 으로 한 줄 JSON. 필드: `timestamp`, `level`, `service`, `logger`,
+  `message`, (활성 span 이 있으면) `trace_id` / `span_id`, (예외 시)
+  `exception`, 그 외 `extra=` 로 전달한 안전한 메타데이터.
+* `trace_id` / `span_id` 는 현재 활성 OpenTelemetry span context 에서 읽어
+  W3C/Tempo 와 동일한 hex 로 기록합니다(Loki label 아님, JSON field).
+* Kubernetes 에서는 Grafana Alloy 가 컨테이너 stdout 을 수집해 Loki 로
+  보냅니다. 애플리케이션에 별도 Loki client 는 없습니다.
+
+### Grafana 검증
+
+1. Tempo: `{ resource.service.name = "backend-record" }` 로 trace 조회.
+2. 특정 trace 의 `trace_id` 복사 → Loki 에서
+   `{namespace="dpyb-record-dev"} | json | trace_id="<복사한 값>"` 검색.
+3. 반대로 Loki 로그 라인의 `trace_id` 를 Tempo 에서 조회해 trace 로 이동.
+   (Grafana Loki→Tempo derived field / trace-to-logs 연동을 쓰면 클릭 이동 가능)
